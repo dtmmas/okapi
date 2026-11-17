@@ -1,0 +1,456 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleCode {
+  ADMIN
+  SUPERVISOR
+  CASHIER
+  WAITER
+  KITCHEN
+  BAR
+  PASTRY
+  DELIVERY
+}
+
+enum PermissionMode {
+  ROLE
+  CUSTOM
+}
+
+enum OrderType {
+  DINE_IN
+  TAKE_OUT
+  DELIVERY
+}
+
+enum OrderStatus {
+  OPEN
+  IN_PREPARATION
+  READY
+  SERVED
+  PAID
+  CANCELLED
+}
+
+enum TableStatus {
+  FREE
+  OCCUPIED
+  RESERVED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  MIXED
+}
+
+enum InventoryMovementType {
+  PURCHASE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  RECIPE_CONSUMPTION
+  SUBRECIPE_PRODUCTION
+  SUBRECIPE_CONSUMPTION
+  WASTE
+}
+
+enum InventoryItemType {
+  RAW
+  SUBRECIPE
+}
+
+enum WasteReasonType {
+  PRODUCTION
+  KITCHEN
+  EXPIRED
+  DAMAGE
+  OTHER
+}
+
+enum CashMovementType {
+  OPENING
+  SALE
+  ENTRY
+  EXPENSE
+  WITHDRAWAL
+}
+
+enum PreparationStation {
+  KITCHEN
+  BAR
+  PASTRY
+}
+
+enum PreparationStatus {
+  PENDING
+  IN_PREPARATION
+  READY
+  DELIVERED
+}
+
+model Tenant {
+  id        Int      @id @default(autoincrement())
+  name      String
+  currencyCode String @default("GTQ")
+  currencySymbol String @default("Q")
+  logoData  String?  @db.MediumText
+  createdAt DateTime @default(now())
+  branches  Branch[]
+  users     User[]
+  roleProfiles RoleProfile[]
+  categories Category[]
+  products  Product[]
+  customers Customer[]
+  tables    RestaurantTable[]
+  orders    Order[]
+  cashShifts CashShift[]
+  cashMovements CashMovementRecord[]
+}
+
+model Branch {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  name      String
+  city      String
+  address   String
+  phone     String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  users     User[]
+  orders    Order[]
+  tables    RestaurantTable[]
+  inventoryItems InventoryItem[]
+  recipes   Recipe[]
+  purchaseReceipts PurchaseReceipt[]
+  wasteRecords WasteRecord[]
+  subRecipeComponents SubRecipeComponent[]
+  inventoryMovements InventoryMovement[]
+  cashShifts CashShift[]
+  cashMovements CashMovementRecord[]
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int
+  branchId     Int?
+  role         RoleCode
+  name         String
+  email        String   @unique
+  passwordHash String
+  isActive     Boolean  @default(true)
+  permissionMode PermissionMode @default(ROLE)
+  permissionsJson Json?
+  createdAt    DateTime @default(now())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  branch       Branch?  @relation(fields: [branchId], references: [id])
+  createdOrders Order[] @relation("OrderCreatedBy")
+  openedCashShifts CashShift[]
+  cashMovements CashMovementRecord[]
+  purchaseReceipts PurchaseReceipt[]
+  wasteRecords WasteRecord[]
+  inventoryMovements InventoryMovement[]
+}
+
+model RoleProfile {
+  id              Int      @id @default(autoincrement())
+  tenantId        Int
+  role            RoleCode
+  name            String
+  description     String?
+  sortOrder       Int      @default(0)
+  permissionsJson Json
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, role])
+  @@index([tenantId, sortOrder])
+}
+
+model Category {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  parentId  Int?
+  name      String
+  color     String?
+  station   PreparationStation @default(KITCHEN)
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  parent    Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryHierarchy")
+  products  Product[]
+}
+
+model Product {
+  id         Int      @id @default(autoincrement())
+  tenantId   Int
+  categoryId Int?
+  name       String
+  sku        String?
+  imageUrl   String?
+  price      Decimal  @db.Decimal(10, 2)
+  isPrepared Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  category   Category? @relation(fields: [categoryId], references: [id])
+  recipes    Recipe[]
+  inventoryMovements InventoryMovement[]
+  orderItems OrderItem[]
+}
+
+model RestaurantTable {
+  id         Int         @id @default(autoincrement())
+  tenantId   Int
+  branchId   Int
+  code       String
+  area       String
+  capacity   Int
+  status     TableStatus @default(FREE)
+  createdAt  DateTime    @default(now())
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  branch     Branch      @relation(fields: [branchId], references: [id])
+  orders     Order[]
+
+  @@unique([branchId, code])
+}
+
+model Customer {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int
+  name        String
+  phone       String?
+  email       String?
+  points      Int      @default(0)
+  creditLimit Decimal  @default(0) @db.Decimal(10, 2)
+  creditUsed  Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  orders      Order[]
+}
+
+model Order {
+  id          Int         @id @default(autoincrement())
+  tenantId    Int
+  branchId    Int
+  tableId     Int?
+  customerId  Int?
+  createdById Int?
+  code        String      @unique
+  type        OrderType
+  status      OrderStatus @default(OPEN)
+  total       Decimal     @default(0) @db.Decimal(10, 2)
+  channel     String
+  createdAt   DateTime    @default(now())
+  closedAt    DateTime?
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  table       RestaurantTable? @relation(fields: [tableId], references: [id])
+  customer    Customer?   @relation(fields: [customerId], references: [id])
+  createdBy   User?       @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  items       OrderItem[]
+  payments    Payment[]
+  inventoryMovements InventoryMovement[]
+
+  @@index([tenantId, branchId, createdAt])
+  @@index([tenantId, createdById, createdAt])
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  productId Int
+  quantity  Decimal  @db.Decimal(10, 2)
+  unitPrice Decimal  @db.Decimal(10, 2)
+  notes     String?
+  station   PreparationStation @default(KITCHEN)
+  status    PreparationStatus  @default(PENDING)
+  startedAt DateTime?
+  deliveredAt DateTime?
+  createdAt DateTime @default(now())
+  order     Order    @relation(fields: [orderId], references: [id])
+  product   Product  @relation(fields: [productId], references: [id])
+}
+
+model Payment {
+  id        Int           @id @default(autoincrement())
+  orderId    Int
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(10, 2)
+  reference String?
+  proofImage String?      @db.MediumText
+  createdAt DateTime      @default(now())
+  order     Order         @relation(fields: [orderId], references: [id])
+}
+
+model CashShift {
+  id            Int      @id @default(autoincrement())
+  tenantId      Int
+  branchId      Int
+  openedById    Int
+  openingAmount Decimal  @default(0) @db.Decimal(10, 2)
+  openedAt      DateTime @default(now())
+  closedAt      DateTime?
+  closingAmount Decimal? @db.Decimal(10, 2)
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  branch   Branch @relation(fields: [branchId], references: [id])
+  openedBy User   @relation(fields: [openedById], references: [id])
+  movements CashMovementRecord[]
+
+  @@index([tenantId, branchId, closedAt])
+}
+
+model CashMovementRecord {
+  id          Int              @id @default(autoincrement())
+  tenantId    Int
+  branchId    Int
+  cashShiftId Int
+  createdById Int
+  type        CashMovementType
+  method      PaymentMethod    @default(CASH)
+  reference   String
+  amount      Decimal          @db.Decimal(10, 2)
+  notes       String?
+  createdAt   DateTime         @default(now())
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  cashShift CashShift @relation(fields: [cashShiftId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@index([tenantId, branchId, cashShiftId, createdAt])
+}
+
+model InventoryItem {
+  id          Int      @id @default(autoincrement())
+  branchId    Int
+  name        String
+  itemType    InventoryItemType @default(RAW)
+  unit        String
+  stock       Decimal  @db.Decimal(10, 3)
+  minStock    Decimal  @db.Decimal(10, 3)
+  unitCost    Decimal  @default(0) @db.Decimal(10, 4)
+  supplier    String
+  createdAt   DateTime @default(now())
+  branch      Branch   @relation(fields: [branchId], references: [id])
+  recipes     Recipe[]
+  subRecipeComponentsAsParent SubRecipeComponent[] @relation("SubRecipeParent")
+  subRecipeComponentsAsComponent SubRecipeComponent[] @relation("SubRecipeComponent")
+  purchaseLines PurchaseReceiptLine[]
+  wasteRecords WasteRecord[]
+  movements   InventoryMovement[]
+}
+
+model Recipe {
+  id              Int      @id @default(autoincrement())
+  branchId        Int
+  productId       Int
+  inventoryItemId Int
+  quantity        Decimal  @db.Decimal(10, 3)
+  branch          Branch   @relation(fields: [branchId], references: [id])
+  product         Product  @relation(fields: [productId], references: [id])
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([branchId, productId, inventoryItemId])
+}
+
+model InventoryMovement {
+  id              Int      @id @default(autoincrement())
+  branchId        Int
+  inventoryItemId Int
+  createdById     Int
+  productId       Int?
+  orderId         Int?
+  type            InventoryMovementType
+  quantityChange  Decimal  @db.Decimal(10, 3)
+  stockBefore     Decimal  @db.Decimal(10, 3)
+  stockAfter      Decimal  @db.Decimal(10, 3)
+  unitCost        Decimal  @default(0) @db.Decimal(10, 4)
+  totalCost       Decimal  @default(0) @db.Decimal(12, 4)
+  reference       String
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  branch        Branch        @relation(fields: [branchId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  createdBy     User          @relation(fields: [createdById], references: [id])
+  product       Product?      @relation(fields: [productId], references: [id])
+  order         Order?        @relation(fields: [orderId], references: [id])
+
+  @@index([branchId, createdAt])
+  @@index([inventoryItemId, createdAt])
+}
+
+model SubRecipeComponent {
+  id                       Int      @id @default(autoincrement())
+  branchId                 Int
+  parentInventoryItemId    Int
+  componentInventoryItemId Int
+  quantity                 Decimal  @db.Decimal(10, 3)
+  createdAt                DateTime @default(now())
+
+  branch        Branch        @relation(fields: [branchId], references: [id])
+  parentItem    InventoryItem @relation("SubRecipeParent", fields: [parentInventoryItemId], references: [id])
+  componentItem InventoryItem @relation("SubRecipeComponent", fields: [componentInventoryItemId], references: [id])
+
+  @@unique([branchId, parentInventoryItemId, componentInventoryItemId])
+}
+
+model PurchaseReceipt {
+  id          Int      @id @default(autoincrement())
+  branchId    Int
+  createdById Int
+  supplier    String
+  reference   String
+  invoiceNo   String?
+  notes       String?
+  totalAmount Decimal  @default(0) @db.Decimal(12, 4)
+  createdAt   DateTime @default(now())
+
+  branch    Branch               @relation(fields: [branchId], references: [id])
+  createdBy User                 @relation(fields: [createdById], references: [id])
+  lines     PurchaseReceiptLine[]
+
+  @@index([branchId, createdAt])
+}
+
+model PurchaseReceiptLine {
+  id                Int      @id @default(autoincrement())
+  purchaseReceiptId Int
+  inventoryItemId   Int
+  quantity          Decimal  @db.Decimal(10, 3)
+  unitCost          Decimal  @db.Decimal(10, 4)
+  totalCost         Decimal  @db.Decimal(12, 4)
+
+  purchaseReceipt PurchaseReceipt @relation(fields: [purchaseReceiptId], references: [id])
+  inventoryItem   InventoryItem   @relation(fields: [inventoryItemId], references: [id])
+
+  @@index([purchaseReceiptId])
+}
+
+model WasteRecord {
+  id              Int      @id @default(autoincrement())
+  branchId        Int
+  inventoryItemId Int
+  createdById     Int
+  quantity        Decimal  @db.Decimal(10, 3)
+  reasonType      WasteReasonType
+  reference       String
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  branch        Branch        @relation(fields: [branchId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  createdBy     User          @relation(fields: [createdById], references: [id])
+
+  @@index([branchId, createdAt])
+}

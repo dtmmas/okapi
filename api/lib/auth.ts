@@ -1,0 +1,76 @@
+import jwt from 'jsonwebtoken';
+import type { Request, Response, NextFunction } from 'express';
+import type { AuthUser, PermissionCode, RoleCode } from '../types.js';
+import { findAuthUserById, sanitizeSessionUser } from '../services/restaurant-service.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'restaurante-gt-dev-secret';
+
+export type AuthPayload = {
+  sub: number;
+  tenantId: number;
+  branchId: number;
+  role: RoleCode;
+  permissions: PermissionCode[];
+};
+
+export type ApiRequest = Request & {
+  authUser?: Awaited<ReturnType<typeof findAuthUserById>> extends infer T
+    ? T extends null
+      ? never
+      : ReturnType<typeof sanitizeSessionUser>
+    : never;
+};
+
+export function signAccessToken(user: AuthUser) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      tenantId: user.tenantId,
+      branchId: user.branchId,
+      role: user.role,
+      permissions: user.permissions,
+    } satisfies AuthPayload,
+    JWT_SECRET,
+    { expiresIn: '8h' },
+  );
+}
+
+export function verifyAccessToken(token: string) {
+  return jwt.verify(token, JWT_SECRET) as unknown as AuthPayload;
+}
+
+export async function requireAuth(req: ApiRequest, res: Response, next: NextFunction) {
+  const authorization = req.headers.authorization;
+
+  if (!authorization?.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'Token no proporcionado.' });
+  }
+
+  try {
+    const token = authorization.replace('Bearer ', '');
+    const payload = verifyAccessToken(token);
+    const user = await findAuthUserById(payload.sub);
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Sesion no valida.' });
+    }
+
+    req.authUser = sanitizeSessionUser(user);
+    return next();
+  } catch {
+    return res.status(401).json({ success: false, message: 'Token expirado o invalido.' });
+  }
+}
+
+export function requirePermissions(permissions: PermissionCode[]) {
+  return (req: ApiRequest, res: Response, next: NextFunction) => {
+    const currentPermissions = req.authUser?.permissions ?? [];
+    const hasAccess = permissions.every((permission) => currentPermissions.includes(permission));
+
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, message: 'No tienes permisos para esta accion.' });
+    }
+
+    return next();
+  };
+}
