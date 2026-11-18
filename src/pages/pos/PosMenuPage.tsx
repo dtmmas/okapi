@@ -746,7 +746,7 @@ export default function PosMenuPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6 lg:px-10 lg:py-8">
+    <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6 lg:h-screen lg:overflow-hidden lg:px-10 lg:py-8">
       <header className="mx-auto max-w-7xl">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -804,142 +804,146 @@ export default function PosMenuPage() {
         </div>
       </header>
 
-      <main className="mx-auto mt-6 grid max-w-7xl gap-6 sm:mt-8 lg:mt-10 lg:grid-cols-[1.15fr_0.85fr] 2xl:grid-cols-[1.3fr_0.7fr]">
-        <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:p-6">
-          <div className="flex flex-wrap gap-2">
-            {categoryGroups.map((group) => (
-              <button
-                key={group.id}
-                type="button"
-                onClick={() => {
-                  setSelectedGroupId(group.id);
-                  setSelectedCategoryId(null);
-                  setSelectedLeafCategoryId(null);
-                }}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:px-5 sm:py-2.5 sm:text-base lg:text-lg ${
-                  activeGroup?.id === group.id
-                    ? 'border-amber-300/40 bg-amber-300/10 text-amber-950 dark:text-white'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
-                }`}
-                style={activeGroup?.id === group.id ? { borderColor: getSectionAccentColor(group, '#f59e0b') } : undefined}
-              >
-                <span className="flex items-center gap-2.5">
-                  <span
-                    className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeGroup?.id === group.id ? 'border-amber-300/20 bg-amber-300/10 text-amber-700 dark:text-amber-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
-                    style={activeGroup?.id === group.id ? { borderColor: getSectionAccentColor(group, '#f59e0b'), color: getSectionAccentColor(group, '#f59e0b') } : undefined}
-                  >
-                    <AppIcon icon={getCategoryIcon(group)} className="h-4 w-4" />
+      <main className="mx-auto mt-6 grid max-w-7xl gap-6 sm:mt-8 lg:mt-6 lg:h-[calc(100vh-11.5rem)] lg:grid-cols-[1.15fr_0.85fr] lg:overflow-hidden 2xl:grid-cols-[1.3fr_0.7fr]">
+        <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden lg:p-6">
+          <div className="shrink-0">
+            <div className="flex flex-wrap gap-2">
+              {categoryGroups.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedGroupId(group.id);
+                    setSelectedCategoryId(null);
+                    setSelectedLeafCategoryId(null);
+                  }}
+                  className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:px-5 sm:py-2.5 sm:text-base lg:text-lg ${
+                    activeGroup?.id === group.id
+                      ? 'border-amber-300/40 bg-amber-300/10 text-amber-950 dark:text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
+                  }`}
+                  style={activeGroup?.id === group.id ? { borderColor: getSectionAccentColor(group, '#f59e0b') } : undefined}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <span
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeGroup?.id === group.id ? 'border-amber-300/20 bg-amber-300/10 text-amber-700 dark:text-amber-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
+                      style={activeGroup?.id === group.id ? { borderColor: getSectionAccentColor(group, '#f59e0b'), color: getSectionAccentColor(group, '#f59e0b') } : undefined}
+                    >
+                      <AppIcon icon={getCategoryIcon(group)} className="h-4 w-4" />
+                    </span>
+                    <span>{group.name}</span>
                   </span>
-                  <span>{group.name}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {activeGroup ? (
-            <div className="mt-5 flex items-center gap-3">
-              <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-zinc-500">
-                Categorias de {activeGroup.name}
-              </span>
-              <div className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
+                </button>
+              ))}
             </div>
-          ) : null}
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {subcategories.map((category) => (
-              <button
-                key={category.id}
-                type="button"
-                onClick={() => {
-                  setSelectedCategoryId(category.id);
-                  setSelectedLeafCategoryId(null);
-                }}
-                className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
-                  selectedCategory?.id === category.id
-                    ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-950 dark:text-white'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
-                }`}
-                style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981') } : undefined}
-              >
-                <span className="flex items-center gap-2.5">
-                  <span
-                    className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${selectedCategory?.id === category.id ? 'border-emerald-300/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
-                    style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981'), color: getSectionAccentColor(category, '#10b981') } : undefined}
-                  >
-                    <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
-                  </span>
-                  <span>{category.name}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {leafCategories.length ? (
-            <>
+            {activeGroup ? (
               <div className="mt-5 flex items-center gap-3">
                 <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-zinc-500">
-                  Subcategorias de {selectedCategory?.name ?? activeGroup?.name ?? 'la seccion'}
+                  Categorias de {activeGroup.name}
                 </span>
                 <div className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
               </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {leafCategories.map((category) => (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onClick={() => setSelectedLeafCategoryId(category.id)}
-                    className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
-                      activeLeafCategory?.id === category.id
-                        ? 'border-sky-300/40 bg-sky-500/10 text-sky-950 dark:text-white'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
-                    }`}
-                    style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9') } : undefined}
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <span
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeLeafCategory?.id === category.id ? 'border-sky-300/20 bg-sky-500/10 text-sky-700 dark:text-sky-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
-                        style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9'), color: getSectionAccentColor(category, '#0ea5e9') } : undefined}
-                      >
-                        <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
-                      </span>
-                      <span>{category.name}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : null}
+            ) : null}
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {productsForCategory.map((product) => (
-              <button
-                key={product.id}
-                type="button"
-                onClick={() => openProductModal(product.id)}
-                className="rounded-[24px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:shadow-none dark:hover:bg-zinc-950/55 sm:p-5 lg:p-6"
-              >
-                {product.imageUrl ? (
-                  <img
-                    src={product.imageUrl}
-                    alt={product.name}
-                    className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 object-cover dark:border-white/10"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-white/[0.03]" />
-                )}
-                <p className="font-semibold text-slate-950 dark:text-white sm:text-lg lg:text-xl">{product.name}</p>
-                <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">
-                  {currencySymbol} {product.price.toFixed(2)}
-                </p>
-                <p className="mt-1 text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">{stationLabel(product.station)}</p>
-              </button>
-            ))}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {subcategories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategoryId(category.id);
+                    setSelectedLeafCategoryId(null);
+                  }}
+                  className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
+                    selectedCategory?.id === category.id
+                      ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-950 dark:text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
+                  }`}
+                  style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981') } : undefined}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <span
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${selectedCategory?.id === category.id ? 'border-emerald-300/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
+                      style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981'), color: getSectionAccentColor(category, '#10b981') } : undefined}
+                    >
+                      <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
+                    </span>
+                    <span>{category.name}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {leafCategories.length ? (
+              <>
+                <div className="mt-5 flex items-center gap-3">
+                  <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-zinc-500">
+                    Subcategorias de {selectedCategory?.name ?? activeGroup?.name ?? 'la seccion'}
+                  </span>
+                  <div className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {leafCategories.map((category) => (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setSelectedLeafCategoryId(category.id)}
+                      className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
+                        activeLeafCategory?.id === category.id
+                          ? 'border-sky-300/40 bg-sky-500/10 text-sky-950 dark:text-white'
+                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
+                      }`}
+                      style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9') } : undefined}
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <span
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeLeafCategory?.id === category.id ? 'border-sky-300/20 bg-sky-500/10 text-sky-700 dark:text-sky-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
+                          style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9'), color: getSectionAccentColor(category, '#0ea5e9') } : undefined}
+                        >
+                          <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
+                        </span>
+                        <span>{category.name}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <div className="mt-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {productsForCategory.map((product) => (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => openProductModal(product.id)}
+                  className="rounded-[24px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:shadow-none dark:hover:bg-zinc-950/55 sm:p-5 lg:p-6"
+                >
+                  {product.imageUrl ? (
+                    <img
+                      src={product.imageUrl}
+                      alt={product.name}
+                      className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 object-cover dark:border-white/10"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-white/[0.03]" />
+                  )}
+                  <p className="font-semibold text-slate-950 dark:text-white sm:text-lg lg:text-xl">{product.name}</p>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">
+                    {currencySymbol} {product.price.toFixed(2)}
+                  </p>
+                  <p className="mt-1 text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">{stationLabel(product.station)}</p>
+                </button>
+              ))}
+            </div>
           </div>
         </section>
 
-        <aside className="space-y-4">
-          <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:p-6">
+        <aside className="space-y-4 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden">
+          <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:shrink-0 lg:p-6">
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Cuenta</p>
             <div className="mt-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-white/8 dark:bg-black/20 dark:text-zinc-200 sm:text-base lg:text-lg">
               <p className="flex items-center justify-between gap-3">
@@ -1003,7 +1007,7 @@ export default function PosMenuPage() {
             ) : null}
 
             {activeOrder ? (
-              <div className="mt-4 space-y-2 text-sm text-slate-700 dark:text-zinc-200">
+              <div className="mt-4 space-y-2 text-sm text-slate-700 dark:text-zinc-200 lg:max-h-44 lg:overflow-y-auto lg:pr-1">
                 {activeOrder.items.map((item, index) => (
                   <div
                     key={`${item.product}-${item.quantity}-${index}`}
@@ -1022,7 +1026,7 @@ export default function PosMenuPage() {
             )}
           </section>
 
-          <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:p-6">
+          <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:p-6">
             <div className="flex items-center justify-between gap-4">
               <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nuevo pedido</p>
               <button
@@ -1034,7 +1038,7 @@ export default function PosMenuPage() {
               </button>
             </div>
 
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 space-y-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
               {cartLines.length ? (
                 cartLines.map((line) => {
                   const product = menuProductById.get(line.productId);
@@ -1132,7 +1136,7 @@ export default function PosMenuPage() {
           </section>
 
           {activeOrder && destinationTables.length ? (
-            <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:p-6">
+            <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:shrink-0 lg:p-6">
               <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Mover cuenta</p>
               <div className="mt-3 flex gap-2">
                 <select
