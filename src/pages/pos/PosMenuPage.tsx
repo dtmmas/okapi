@@ -1164,7 +1164,7 @@ export default function PosMenuPage() {
 
       {productModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 dark:bg-black/60">
-          <div className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-5 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:p-6 lg:p-8">
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white p-4 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:max-h-[calc(100vh-3rem)] sm:p-5 lg:max-h-[calc(100vh-4rem)] lg:p-6">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Detalle del item</p>
@@ -1182,97 +1182,99 @@ export default function PosMenuPage() {
               </button>
             </div>
 
-            {modalProduct?.imageUrl ? (
-              <img
-                src={modalProduct.imageUrl}
-                alt={modalProduct.name}
-                className="mt-4 aspect-[4/3] w-full rounded-[22px] border border-slate-200 object-cover dark:border-white/10"
-                loading="lazy"
-              />
-            ) : null}
+            <div className="mt-4 flex-1 overflow-y-auto pr-1">
+              {modalProduct?.imageUrl ? (
+                <img
+                  src={modalProduct.imageUrl}
+                  alt={modalProduct.name}
+                  className="aspect-[16/9] max-h-[26vh] w-full rounded-[22px] border border-slate-200 object-cover dark:border-white/10 sm:aspect-[4/3] sm:max-h-[30vh]"
+                  loading="lazy"
+                />
+              ) : null}
 
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              {modalProductAllowsModifiers ? (
-                <>
-                  <div className="space-y-3">
-                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Salsa</label>
-                    <button
-                      type="button"
-                      onClick={() => openModifierDialog('SAUCES')}
-                      className="flex h-14 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base lg:h-16 lg:text-lg"
-                    >
-                      <span className="truncate">{modalSauces.length ? `${modalSauces.length} salsa(s) seleccionadas` : 'Seleccionar salsas'}</span>
-                      <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
-                    </button>
-                    {modalSauces.length ? (
-                      <p className="text-xs text-slate-500 dark:text-zinc-500">{modalSauces.join(', ')}</p>
-                    ) : null}
-                    <div className="flex flex-wrap gap-2">
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {modalProductAllowsModifiers ? (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Salsa</label>
                       <button
                         type="button"
-                        onClick={() => setModalSauces([])}
-                        disabled={!modalSauces.length}
+                        onClick={() => openModifierDialog('SAUCES')}
+                        className="flex min-h-12 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base"
+                      >
+                        <span className="truncate">{modalSauces.length ? `${modalSauces.length} salsa(s) seleccionadas` : 'Seleccionar salsas'}</span>
+                        <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
+                      </button>
+                      {modalSauces.length ? (
+                        <p className="text-xs text-slate-500 dark:text-zinc-500">{modalSauces.join(', ')}</p>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setModalSauces([])}
+                          disabled={!modalSauces.length}
+                          className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+                        >
+                          <AppIcon icon={X} className="h-3.5 w-3.5" />
+                          Quitar salsas
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Aderezo</label>
+                      <button
+                        type="button"
+                        onClick={() => openModifierDialog('DRESSINGS')}
+                        className="flex min-h-12 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base"
+                      >
+                        <span className="truncate">{modalDressings.length ? `${modalDressings.length} aderezo(s) seleccionados` : 'Seleccionar aderezos'}</span>
+                        <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
+                      </button>
+                      {modalDressings.length ? (
+                        <p className="text-xs text-slate-500 dark:text-zinc-500">{modalDressings.join(', ')}</p>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setModalDressings([])}
+                        disabled={!modalDressings.length}
                         className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
                       >
                         <AppIcon icon={X} className="h-3.5 w-3.5" />
-                        Quitar salsas
+                        Quitar aderezos
                       </button>
                     </div>
+                  </>
+                ) : (
+                  <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2">
+                    Este producto no aplica para salsas o aderezos.
                   </div>
+                )}
 
-                  <div className="space-y-3">
-                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Aderezo</label>
-                    <button
-                      type="button"
-                      onClick={() => openModifierDialog('DRESSINGS')}
-                      className="flex h-14 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base lg:h-16 lg:text-lg"
-                    >
-                      <span className="truncate">{modalDressings.length ? `${modalDressings.length} aderezo(s) seleccionados` : 'Seleccionar aderezos'}</span>
-                      <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
-                    </button>
-                    {modalDressings.length ? (
-                      <p className="text-xs text-slate-500 dark:text-zinc-500">{modalDressings.join(', ')}</p>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setModalDressings([])}
-                      disabled={!modalDressings.length}
-                      className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
-                    >
-                      <AppIcon icon={X} className="h-3.5 w-3.5" />
-                      Quitar aderezos
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2">
-                  Este producto no aplica para salsas o aderezos.
+                <div className="sm:col-span-2">
+                  <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Observaciones</label>
+                  <textarea
+                    value={modalNotes}
+                    onChange={(event) => setModalNotes(event.target.value)}
+                    rows={4}
+                    className="mt-3 min-h-28 w-full resize-y rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:text-base"
+                  />
                 </div>
-              )}
-
-              <div className="sm:col-span-2">
-                <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Observaciones</label>
-                <textarea
-                  value={modalNotes}
-                  onChange={(event) => setModalNotes(event.target.value)}
-                  rows={4}
-                  className="mt-3 w-full resize-none rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:text-base lg:text-lg"
-                />
               </div>
             </div>
 
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <div className="mt-4 grid shrink-0 gap-3 border-t border-slate-200 pt-4 dark:border-white/10 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={closeProductModal}
-                className="h-12 rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-14 sm:text-base lg:h-16 lg:text-lg"
+                className="h-12 rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-14 sm:text-base"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={confirmAddProduct}
-                className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base lg:h-16 lg:text-lg"
+                className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base"
               >
                 {editingLineId ? 'Guardar cambios' : 'Agregar'}
               </button>
