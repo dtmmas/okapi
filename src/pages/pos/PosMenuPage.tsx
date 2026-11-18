@@ -99,11 +99,11 @@ export default function PosMenuPage() {
   const clearCart = usePosWizardStore((state) => state.clearCart);
   const reset = usePosWizardStore((state) => state.reset);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
-  const [selectedLeafCategoryId, setSelectedLeafCategoryId] = useState<number | null>(null);
   const [moveToTableId, setMoveToTableId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [pickerCategoryId, setPickerCategoryId] = useState<number | null>(null);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [modalProductId, setModalProductId] = useState<number | null>(null);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
@@ -385,56 +385,49 @@ export default function PosMenuPage() {
     }
   }
 
-  const selectedCategory = useMemo(() => {
-    if (!subcategories.length) {
-      return null;
+  function collectCategoryTreeIds(parentId: number) {
+    const ids = new Set<number>([parentId]);
+    const queue = [parentId];
+
+    while (queue.length) {
+      const currentId = queue.shift();
+      if (!currentId) {
+        continue;
+      }
+
+      menuCategories.forEach((category) => {
+        if (category.parentId === currentId && !ids.has(category.id)) {
+          ids.add(category.id);
+          queue.push(category.id);
+        }
+      });
     }
 
-    if (selectedCategoryId) {
-      return subcategories.find((category) => category.id === selectedCategoryId) ?? subcategories[0];
-    }
+    return ids;
+  }
 
-    return subcategories[0];
-  }, [subcategories, selectedCategoryId]);
-
-  const leafCategories = useMemo(() => {
-    if (!selectedCategory) {
+  const pickerCategory = useMemo(() => (pickerCategoryId ? categoryById.get(pickerCategoryId) ?? null : null), [categoryById, pickerCategoryId]);
+  const pickerChildCategories = useMemo(() => {
+    if (!pickerCategory) {
       return [];
     }
 
     return menuCategories
-      .filter((category) => category.parentId === selectedCategory.id)
+      .filter((category) => category.parentId === pickerCategory.id)
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [menuCategories, selectedCategory]);
-
-  const activeLeafCategory = useMemo(() => {
-    if (!leafCategories.length) {
-      return null;
+  }, [menuCategories, pickerCategory]);
+  const pickerProducts = useMemo(() => {
+    if (!pickerCategory) {
+      return [];
     }
 
-    if (selectedLeafCategoryId) {
-      return leafCategories.find((category) => category.id === selectedLeafCategoryId) ?? leafCategories[0];
-    }
-
-    return leafCategories[0];
-  }, [leafCategories, selectedLeafCategoryId]);
-
-  const productsForCategory = useMemo(() => {
-    if (activeLeafCategory) {
-      return menuProducts.filter((product) => product.categoryId === activeLeafCategory.id);
-    }
-
-    if (selectedCategory) {
-      return menuProducts.filter((product) => product.categoryId === selectedCategory.id);
-    }
-
-    if (activeGroup) {
-      return menuProducts.filter((product) => product.categoryId === activeGroup.id);
-    }
-
-    return [];
-  }, [activeGroup, activeLeafCategory, menuProducts, selectedCategory]);
+    const categoryIds = collectCategoryTreeIds(pickerCategory.id);
+    return menuProducts
+      .filter((product) => product.categoryId && categoryIds.has(product.categoryId))
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [menuCategories, menuProducts, pickerCategory]);
 
   const cartLines = useMemo(() => Object.values(cart), [cart]);
 
@@ -670,6 +663,8 @@ export default function PosMenuPage() {
   );
 
   function openProductModal(productId: number, lineId?: string | null) {
+    setProductPickerOpen(false);
+    setPickerCategoryId(null);
     const existingLine = lineId ? cart[lineId] ?? null : null;
     setModalProductId(productId);
     setEditingLineId(existingLine?.id ?? null);
@@ -690,6 +685,16 @@ export default function PosMenuPage() {
     setModalDressings([]);
     setModifierDialogSection(null);
     setModifierDraftSelection([]);
+  }
+
+  function openProductPicker(categoryId: number) {
+    setPickerCategoryId(categoryId);
+    setProductPickerOpen(true);
+  }
+
+  function closeProductPicker() {
+    setProductPickerOpen(false);
+    setPickerCategoryId(null);
   }
 
   function openModifierDialog(section: ModifierSection) {
@@ -814,8 +819,8 @@ export default function PosMenuPage() {
                   type="button"
                   onClick={() => {
                     setSelectedGroupId(group.id);
-                    setSelectedCategoryId(null);
-                    setSelectedLeafCategoryId(null);
+                    setProductPickerOpen(false);
+                    setPickerCategoryId(null);
                   }}
                   className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:px-5 sm:py-2.5 sm:text-base lg:text-lg ${
                     activeGroup?.id === group.id
@@ -845,100 +850,41 @@ export default function PosMenuPage() {
                 <div className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
               </div>
             ) : null}
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {subcategories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedCategoryId(category.id);
-                    setSelectedLeafCategoryId(null);
-                  }}
-                  className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
-                    selectedCategory?.id === category.id
-                      ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-950 dark:text-white'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
-                  }`}
-                  style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981') } : undefined}
-                >
-                  <span className="flex items-center gap-2.5">
-                    <span
-                      className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${selectedCategory?.id === category.id ? 'border-emerald-300/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
-                      style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981'), color: getSectionAccentColor(category, '#10b981') } : undefined}
-                    >
-                      <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
-                    </span>
-                    <span>{category.name}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {leafCategories.length ? (
-              <>
-                <div className="mt-5 flex items-center gap-3">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-zinc-500">
-                    Subcategorias de {selectedCategory?.name ?? activeGroup?.name ?? 'la seccion'}
-                  </span>
-                  <div className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {leafCategories.map((category) => (
-                    <button
-                      key={category.id}
-                      type="button"
-                      onClick={() => setSelectedLeafCategoryId(category.id)}
-                      className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
-                        activeLeafCategory?.id === category.id
-                          ? 'border-sky-300/40 bg-sky-500/10 text-sky-950 dark:text-white'
-                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
-                      }`}
-                      style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9') } : undefined}
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <span
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeLeafCategory?.id === category.id ? 'border-sky-300/20 bg-sky-500/10 text-sky-700 dark:text-sky-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
-                          style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9'), color: getSectionAccentColor(category, '#0ea5e9') } : undefined}
-                        >
-                          <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
-                        </span>
-                        <span>{category.name}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            ) : null}
           </div>
 
           <div className="mt-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {productsForCategory.map((product) => (
+              {(subcategories.length ? subcategories : activeGroup ? [activeGroup] : []).map((category) => (
                 <button
-                  key={product.id}
+                  key={category.id}
                   type="button"
-                  onClick={() => openProductModal(product.id)}
-                  className="rounded-[24px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:shadow-none dark:hover:bg-zinc-950/55 sm:p-5 lg:p-6"
+                  onClick={() => openProductPicker(category.id)}
+                  className="rounded-[24px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:shadow-none dark:hover:bg-zinc-950/55 sm:p-6"
+                  style={{ borderColor: getAccentBorderColor(category, '#e2e8f0') }}
                 >
-                  {product.imageUrl ? (
-                    <img
-                      src={product.imageUrl}
-                      alt={product.name}
-                      className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 object-cover dark:border-white/10"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-white/[0.03]" />
-                  )}
-                  <p className="font-semibold text-slate-950 dark:text-white sm:text-lg lg:text-xl">{product.name}</p>
-                  <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">
-                    {currencySymbol} {product.price.toFixed(2)}
-                  </p>
-                  <p className="mt-1 text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">{stationLabel(product.station)}</p>
+                  <div className="flex items-start gap-3">
+                    <span
+                      className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-600 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300"
+                      style={{ color: getSectionAccentColor(category, '#10b981') }}
+                    >
+                      <AppIcon icon={getCategoryIcon(category)} className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-950 dark:text-white sm:text-lg">{category.name}</p>
+                      <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                        Toca para ver los platillos disponibles.
+                      </p>
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>
+
+            {!subcategories.length && !activeGroup ? (
+              <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500">
+                No hay categorias activas para mostrar en el POS.
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -1165,6 +1111,85 @@ export default function PosMenuPage() {
           ) : null}
         </aside>
       </main>
+
+      {productPickerOpen && pickerCategory ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/40 px-4 py-6 dark:bg-black/60">
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white p-4 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:max-h-[calc(100vh-3rem)] sm:p-5 lg:max-h-[calc(100vh-4rem)] lg:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Platillos</p>
+                <h2 className="mt-2 truncate font-display text-2xl text-slate-950 dark:text-white sm:text-3xl">{pickerCategory.name}</h2>
+                <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                  Selecciona el producto para abrir su detalle y capturar observaciones.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeProductPicker}
+                className="h-10 w-10 rounded-2xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:bg-white/[0.06]"
+              >
+                ×
+              </button>
+            </div>
+
+            {pickerChildCategories.length ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {pickerChildCategories.map((category) => (
+                  <span
+                    key={category.id}
+                    className="inline-flex items-center rounded-2xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-300"
+                  >
+                    {category.name}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {pickerProducts.length ? (
+                  pickerProducts.map((product) => {
+                    const productCategory = product.categoryId ? categoryById.get(product.categoryId) ?? null : null;
+
+                    return (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() => openProductModal(product.id)}
+                        className="rounded-[24px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:shadow-none dark:hover:bg-zinc-950/55 sm:p-5"
+                      >
+                        {product.imageUrl ? (
+                          <img
+                            src={product.imageUrl}
+                            alt={product.name}
+                            className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 object-cover dark:border-white/10"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="mb-4 flex aspect-[4/3] w-full items-center justify-center rounded-[18px] border border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-500">
+                            <AppIcon icon={getCategoryIcon(productCategory ?? pickerCategory)} className="h-7 w-7" />
+                          </div>
+                        )}
+                        <p className="font-semibold text-slate-950 dark:text-white sm:text-lg">{product.name}</p>
+                        <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                          {currencySymbol} {product.price.toFixed(2)}
+                        </p>
+                        <p className="mt-1 text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">
+                          {(productCategory?.name ?? pickerCategory.name)} • {stationLabel(product.station)}
+                        </p>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2 xl:col-span-3">
+                    No hay platillos activos en esta categoria todavia.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {productModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 dark:bg-black/60">
