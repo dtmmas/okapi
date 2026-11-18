@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
+import { applyBrowserBrand } from '@/lib/browser-brand';
 import { buildMenuSectionRoots, findMenuSectionRootByQueryValue } from '@/lib/menu-sections';
 import { useSessionStore } from '@/store/useSessionStore';
 import LoginPage from '@/pages/LoginPage';
@@ -92,6 +93,14 @@ function ProtectedLayout() {
   const menuSectionRoots = buildMenuSectionRoots(snapshot.menuCategories);
   const copy = location.pathname === '/menu' ? getMenuPageCopy(location.search, menuSectionRoots) : pageTitles[location.pathname] || pageTitles['/dashboard'];
 
+  useEffect(() => {
+    applyBrowserBrand({
+      brandName: snapshot.brand.name,
+      logoData: snapshot.brand.logoData ?? null,
+      pageTitle: copy.title,
+    });
+  }, [copy.title, snapshot.brand.logoData, snapshot.brand.name]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-[#07070a] dark:text-white">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(251,146,60,0.10),_transparent_24%),radial-gradient(circle_at_bottom_right,_rgba(244,63,94,0.12),_transparent_22%)] dark:bg-[radial-gradient(circle_at_top_left,_rgba(251,146,60,0.10),_transparent_24%),radial-gradient(circle_at_bottom_right,_rgba(244,63,94,0.12),_transparent_22%)]" />
@@ -138,11 +147,37 @@ function FullscreenLayout() {
   const location = useLocation();
   const { token, user, snapshot, loading, hydrate, logout } = useSessionStore();
 
+  const pageTitle = location.pathname.startsWith('/kiosk')
+    ? 'Kiosko'
+    : location.pathname.startsWith('/pos/menu')
+      ? 'POS Menu'
+      : location.pathname.startsWith('/pos/cliente')
+        ? 'POS Cliente'
+        : location.pathname.startsWith('/pos/mesas')
+          ? 'POS Mesas'
+          : location.pathname.startsWith('/cashier/cobrar')
+            ? 'Cobro'
+            : location.pathname.startsWith('/cashier')
+              ? 'Caja'
+              : 'Operacion';
+
   useEffect(() => {
     if (token && !user && !loading) {
       void hydrate();
     }
   }, [token, user, loading, hydrate]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+
+    applyBrowserBrand({
+      brandName: snapshot.brand.name,
+      logoData: snapshot.brand.logoData ?? null,
+      pageTitle,
+    });
+  }, [pageTitle, snapshot]);
 
   if (!token) {
     return <Navigate to="/login" replace />;

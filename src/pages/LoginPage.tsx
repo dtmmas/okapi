@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, ShieldCheck, Store, UtensilsCrossed } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { applyBrowserBrand } from '@/lib/browser-brand';
 import { useSessionStore } from '@/store/useSessionStore';
 import { getPostLoginPath } from '@/lib/session-routing';
 import { getPublicBrand } from '@/services/api';
@@ -34,6 +35,10 @@ export default function LoginPage() {
         return;
       });
   }, []);
+
+  useEffect(() => {
+    applyBrowserBrand({ brandName, logoData, pageTitle: 'Acceso' });
+  }, [brandName, logoData]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
