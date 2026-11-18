@@ -85,6 +85,19 @@ const permissionCodeValues = [
   'SETTINGS_MANAGE',
 ] as const;
 const allowedImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+function parseDataImageUrl(value: string) {
+  const match = value.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    mimeType: match[1],
+    buffer: Buffer.from(match[2], 'base64'),
+  };
+}
+
 const menuImageUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, callback) => {
@@ -111,6 +124,20 @@ const menuImageUpload = multer({
 
 router.get('/public/brand', async (_req, res) => {
   res.json({ success: true, data: await getPublicBrand() });
+});
+
+router.get('/public/favicon', async (_req, res) => {
+  const brand = await getPublicBrand();
+  const parsed = brand.logoData ? parseDataImageUrl(brand.logoData) : null;
+
+  if (parsed) {
+    res.setHeader('Content-Type', parsed.mimeType);
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.send(parsed.buffer);
+    return;
+  }
+
+  return res.redirect('/favicon.svg');
 });
 
 router.post('/uploads/menu-image', requireAuth, requirePermissions(['INVENTORY_MANAGE']), (req: ApiRequest, res) => {

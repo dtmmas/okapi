@@ -1,9 +1,12 @@
 const DEFAULT_TITLE = 'Restaurante';
-const DEFAULT_FAVICON = '/favicon.svg';
+const DEFAULT_FAVICON = '/api/v1/public/favicon';
 
 const MANAGED_ICON_RELS = ['icon', 'shortcut icon', 'apple-touch-icon'] as const;
 
 function detectFaviconType(faviconHref: string) {
+  if (faviconHref.includes('/api/v1/public/favicon')) {
+    return 'image/png';
+  }
   if (faviconHref.startsWith('data:image/png') || faviconHref.endsWith('.png')) {
     return 'image/png';
   }
@@ -45,7 +48,8 @@ export function applyBrowserBrand(options?: { brandName?: string | null; logoDat
   const pageTitle = options?.pageTitle?.trim();
   document.title = pageTitle && pageTitle !== brandName ? `${brandName} | ${pageTitle}` : brandName;
 
-  const faviconHref = options?.logoData?.trim() || DEFAULT_FAVICON;
+  const faviconVersion = options?.logoData?.trim() ? String(options.logoData.trim().length) : 'default';
+  const faviconHref = `${DEFAULT_FAVICON}?v=${encodeURIComponent(faviconVersion)}`;
   const managedHref = buildManagedFaviconHref(faviconHref, brandName);
   const managedType = detectFaviconType(faviconHref);
 
