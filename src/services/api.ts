@@ -26,8 +26,9 @@ type ApiEnvelope<T> = {
 async function apiRequest<T>(url: string, options?: RequestInit): Promise<T> {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
   const headers = new Headers(options?.headers);
+  const isFormData = typeof FormData !== 'undefined' && options?.body instanceof FormData;
 
-  if (!headers.has('Content-Type') && options?.body) {
+  if (!headers.has('Content-Type') && options?.body && !isFormData) {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -106,6 +107,41 @@ export function updateBrandSettings(payload: RestaurantSnapshot['brand']) {
   return apiRequest<RestaurantSnapshot['brand']>('/api/v1/settings/brand', {
     method: 'PUT',
     body: JSON.stringify(payload),
+  });
+}
+
+export function createBranch(payload: {
+  name: string;
+  city: string;
+  address: string;
+  phone: string;
+  isActive?: boolean;
+}) {
+  return apiRequest<RestaurantSnapshot['branches'][number]>('/api/v1/branches', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateBranch(
+  branchId: number,
+  payload: {
+    name: string;
+    city: string;
+    address: string;
+    phone: string;
+    isActive?: boolean;
+  },
+) {
+  return apiRequest<RestaurantSnapshot['branches'][number]>(`/api/v1/branches/${branchId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteBranch(branchId: number) {
+  return apiRequest<{ success: true }>(`/api/v1/branches/${branchId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -399,6 +435,16 @@ export function updateProduct(
 export function deleteProduct(productId: number) {
   return apiRequest<{ success: true }>(`/api/v1/menu/products/${productId}`, {
     method: 'DELETE',
+  });
+}
+
+export function uploadMenuImage(file: File) {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  return apiRequest<{ url: string; fileName: string }>('/api/v1/uploads/menu-image', {
+    method: 'POST',
+    body: formData,
   });
 }
 

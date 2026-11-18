@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Beef, CakeSlice, ChefHat, Coffee, CreditCard, Fish, GlassWater, IceCreamCone, LayoutDashboard, LogOut, Martini, Pizza, ReceiptText, Salad, Sandwich, SendHorizontal, UserRound, UtensilsCrossed } from 'lucide-react';
+import { ArrowLeftRight, Beef, CakeSlice, Check, ChefHat, Coffee, CreditCard, Fish, GlassWater, IceCreamCone, LayoutDashboard, LogOut, Martini, Pizza, ReceiptText, Salad, Sandwich, SendHorizontal, UserRound, UtensilsCrossed, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon, type IconComponent } from '@/components/AppIcon';
@@ -6,6 +6,73 @@ import { createOrUpdateOrder, moveTableAccount } from '@/services/api';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import type { MenuCategory } from '@/types/restaurant';
+
+type MenuSection = 'DISHES' | 'BEVERAGES' | 'PRODUCTS' | 'EXTRAS' | 'SAUCES' | 'DRESSINGS';
+type ModifierSection = 'SAUCES' | 'DRESSINGS';
+type ModifierOption = {
+  id: number;
+  label: string;
+  imageUrl?: string | null;
+  section: ModifierSection;
+  price: number;
+};
+
+function normalizeLabel(value?: string | null) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function inferSectionFromName(name?: string | null): MenuSection | null {
+  const normalized = normalizeLabel(name);
+  if (!normalized) return null;
+  if (normalized.includes('salsa')) return 'SAUCES';
+  if (normalized.includes('aderezo') || normalized.includes('alino') || normalized.includes('dressing')) return 'DRESSINGS';
+  if (normalized === 'extras' || normalized === 'extra') return 'EXTRAS';
+  if (normalized === 'bebidas' || normalized === 'bebida') return 'BEVERAGES';
+  if (normalized === 'platillos' || normalized === 'platillo') return 'DISHES';
+  if (normalized === 'productos' || normalized === 'producto') return 'PRODUCTS';
+  return null;
+}
+
+function productSupportsModifiers(product: { name: string; isPrepared: boolean; station: 'KITCHEN' | 'BAR' | 'PASTRY' }, category?: MenuCategory | null, section?: MenuSection | null) {
+  const resolvedSection = section ?? (product.isPrepared ? 'DISHES' : 'PRODUCTS');
+  if (resolvedSection !== 'DISHES') {
+    return false;
+  }
+
+  if (product.station !== 'KITCHEN') {
+    return false;
+  }
+
+  const blockedKeywords = [
+    'bebida',
+    'refresco',
+    'soda',
+    'jugo',
+    'agua',
+    'cafe',
+    'te',
+    'licor',
+    'vino',
+    'cerveza',
+    'coctel',
+    'cocktail',
+    'batido',
+    'smoothie',
+    'postre',
+    'helado',
+    'pastel',
+    'torta',
+    'flan',
+    'cheesecake',
+  ];
+
+  const haystack = [product.name, category?.name ?? ''].map((value) => normalizeLabel(value)).join(' ');
+  return !blockedKeywords.some((keyword) => haystack.includes(keyword));
+}
 
 export default function PosMenuPage() {
   const navigate = useNavigate();
@@ -26,36 +93,83 @@ export default function PosMenuPage() {
   const reset = usePosWizardStore((state) => state.reset);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [selectedLeafCategoryId, setSelectedLeafCategoryId] = useState<number | null>(null);
   const [moveToTableId, setMoveToTableId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [modalProductId, setModalProductId] = useState<number | null>(null);
   const [modalNotes, setModalNotes] = useState('');
-  const [modalSauce, setModalSauce] = useState<string>('');
+  const [modalSauces, setModalSauces] = useState<string[]>([]);
+  const [modalDressings, setModalDressings] = useState<string[]>([]);
+  const [modifierDialogSection, setModifierDialogSection] = useState<ModifierSection | null>(null);
+  const [modifierDraftSelection, setModifierDraftSelection] = useState<string[]>([]);
   const [preBillOpen, setPreBillOpen] = useState(false);
 
   const tables = snapshot?.tables ?? [];
   const menuCategories = snapshot?.menuCategories ?? [];
   const menuProducts = snapshot?.menuProducts ?? [];
   const activeOrders = snapshot?.activeOrders ?? [];
+  const menuProductById = useMemo(() => new Map(menuProducts.map((product) => [product.id, product])), [menuProducts]);
+  const categoryById = useMemo(() => new Map(menuCategories.map((category) => [category.id, category])), [menuCategories]);
+
+  const categorySectionById = useMemo(() => {
+    function resolveCategorySection(category: MenuCategory, seen = new Set<number>()): MenuSection {
+      if (seen.has(category.id)) {
+        return category.station === 'BAR' ? 'PRODUCTS' : 'DISHES';
+      }
+      seen.add(category.id);
+
+      const explicitSection = inferSectionFromName(category.name);
+      if (explicitSection) {
+        return explicitSection;
+      }
+
+      if (category.parentId) {
+        const parent = categoryById.get(category.parentId);
+        if (parent) {
+          return resolveCategorySection(parent, seen);
+        }
+      }
+
+      return category.station === 'BAR' ? 'PRODUCTS' : 'DISHES';
+    }
+
+    return new Map(menuCategories.map((category) => [category.id, resolveCategorySection(category)] as const));
+  }, [categoryById, menuCategories]);
 
   const categoryGroups = useMemo(() => {
-    const stationWeight = (station: 'KITCHEN' | 'BAR' | 'PASTRY') => {
-      if (station === 'KITCHEN') {
+    const groupOrder = (category: MenuCategory) => {
+      const normalized = normalizeLabel(category.name);
+      if (normalized === 'platillos' || normalized === 'platillo') {
         return 0;
       }
-      if (station === 'BAR') {
+      if (normalized === 'bebidas' || normalized === 'bebida') {
         return 1;
       }
-      return 2;
+      if (normalized === 'productos' || normalized === 'producto') {
+        return 2;
+      }
+      if (normalized === 'extras' || normalized === 'extra') {
+        return 3;
+      }
+      if (normalized === 'postres' || normalized === 'postre') {
+        return 4;
+      }
+      return 5;
     };
 
     return menuCategories
-      .filter((category) => !category.parentId)
+      .filter((category) => !category.parentId && !['SAUCES', 'DRESSINGS'].includes(categorySectionById.get(category.id) ?? 'DISHES'))
       .slice()
-      .sort((a, b) => stationWeight(a.station) - stationWeight(b.station));
-  }, [menuCategories]);
+      .sort((a, b) => {
+        const orderDiff = groupOrder(a) - groupOrder(b);
+        if (orderDiff !== 0) {
+          return orderDiff;
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [categorySectionById, menuCategories]);
 
   const activeGroup = useMemo(() => {
     if (!categoryGroups.length) {
@@ -218,21 +332,46 @@ export default function PosMenuPage() {
     return subcategories[0];
   }, [subcategories, selectedCategoryId]);
 
-  const productsForCategory = useMemo(() => {
+  const leafCategories = useMemo(() => {
     if (!selectedCategory) {
       return [];
     }
 
-    return menuProducts.filter((product) => product.categoryId === selectedCategory.id);
-  }, [menuProducts, selectedCategory]);
+    return menuCategories
+      .filter((category) => category.parentId === selectedCategory.id)
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [menuCategories, selectedCategory]);
+
+  const activeLeafCategory = useMemo(() => {
+    if (!leafCategories.length) {
+      return null;
+    }
+
+    if (selectedLeafCategoryId) {
+      return leafCategories.find((category) => category.id === selectedLeafCategoryId) ?? leafCategories[0];
+    }
+
+    return leafCategories[0];
+  }, [leafCategories, selectedLeafCategoryId]);
+
+  const productsForCategory = useMemo(() => {
+    if (activeLeafCategory) {
+      return menuProducts.filter((product) => product.categoryId === activeLeafCategory.id);
+    }
+
+    if (selectedCategory) {
+      return menuProducts.filter((product) => product.categoryId === selectedCategory.id);
+    }
+
+    if (activeGroup) {
+      return menuProducts.filter((product) => product.categoryId === activeGroup.id);
+    }
+
+    return [];
+  }, [activeGroup, activeLeafCategory, menuProducts, selectedCategory]);
 
   const cartLines = useMemo(() => Object.values(cart), [cart]);
-  const cartTotal = useMemo(() => {
-    return cartLines.reduce((sum, line) => {
-      const product = menuProducts.find((item) => item.id === line.productId);
-      return sum + (product ? product.price * line.quantity : 0);
-    }, 0);
-  }, [cartLines, menuProducts]);
 
   const destinationTables = useMemo(
     () => tables.filter((table) => table.id !== tableId && table.status !== 'OCCUPIED'),
@@ -266,23 +405,39 @@ export default function PosMenuPage() {
           }
         : undefined;
 
+      const orderItems = cartLines.flatMap((line) => {
+        const baseProduct = menuProductById.get(line.productId);
+        const combinedNotes = [
+          line.sauces.length ? `Salsas: ${line.sauces.join(', ')}` : '',
+          line.dressings.length ? `Aderezos: ${line.dressings.join(', ')}` : '',
+          line.notes,
+        ]
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .join('\n');
+
+        const billableModifiers = [...resolveModifierOptions(line.sauces), ...resolveModifierOptions(line.dressings)].filter((option) => option.price > 0);
+
+        return [
+          {
+            productId: line.productId,
+            quantity: line.quantity,
+            ...(combinedNotes ? { notes: combinedNotes } : {}),
+          },
+          ...billableModifiers.map((option) => ({
+            productId: option.id,
+            quantity: line.quantity,
+            notes: `Cobro adicional para ${baseProduct?.name ?? 'producto'}`,
+          })),
+        ];
+      });
+
       await createOrUpdateOrder({
         tableId: selectedTable.id,
         ...(customerId ? { customerId } : {}),
         ...(customer ? { customer } : {}),
         type: 'DINE_IN',
-        items: cartLines.map((line) => {
-          const combinedNotes = [line.notes, line.sauce ? `Salsa/Aderezo: ${line.sauce}` : '']
-            .map((part) => part.trim())
-            .filter(Boolean)
-            .join('\n');
-
-          return {
-            productId: line.productId,
-            quantity: line.quantity,
-            ...(combinedNotes ? { notes: combinedNotes } : {}),
-          };
-        }),
+        items: orderItems,
       });
       clearCart();
       await refreshSnapshot();
@@ -370,32 +525,92 @@ export default function PosMenuPage() {
     return ChefHat;
   }
 
-  const sauceOptions = useMemo(
-    () => [
-      '',
-      'Sin salsa',
-      'Mayonesa',
-      'Ketchup',
-      'Mostaza',
-      'BBQ',
-      'Chipotle',
-      'Ranch',
-      'César',
-      'Vinagreta',
-      'Ají / Picante',
-    ],
-    [],
+  const modifierOptions = useMemo(() => {
+    const uniqueNames = new Map<string, ModifierOption>();
+
+    menuProducts.forEach((product) => {
+      if (!product.categoryId) {
+        return;
+      }
+
+      const section = categorySectionById.get(product.categoryId);
+      if (section !== 'SAUCES' && section !== 'DRESSINGS') {
+        return;
+      }
+
+      const normalizedName = normalizeLabel(product.name);
+      if (!normalizedName || uniqueNames.has(normalizedName)) {
+        return;
+      }
+
+      uniqueNames.set(normalizedName, {
+        id: product.id,
+        label: product.name,
+        imageUrl: product.imageUrl ?? null,
+        section,
+        price: Number(product.price ?? 0),
+      });
+    });
+
+    return Array.from(uniqueNames.values()).sort((a, b) => {
+      if (a.section !== b.section) {
+        return a.section.localeCompare(b.section);
+      }
+      return a.label.localeCompare(b.label);
+    });
+  }, [categorySectionById, menuProducts]);
+
+  const sauceOptions = useMemo(() => modifierOptions.filter((option) => option.section === 'SAUCES'), [modifierOptions]);
+  const dressingOptions = useMemo(() => modifierOptions.filter((option) => option.section === 'DRESSINGS'), [modifierOptions]);
+  const activeModifierOptions = modifierDialogSection === 'SAUCES' ? sauceOptions : dressingOptions;
+  const modifierOptionByName = useMemo(
+    () => new Map(modifierOptions.map((option) => [normalizeLabel(option.label), option] as const)),
+    [modifierOptions],
   );
+
+  function resolveModifierOptions(labels: string[]) {
+    return labels
+      .map((label) => modifierOptionByName.get(normalizeLabel(label)) ?? null)
+      .filter((option): option is ModifierOption => option !== null);
+  }
+
+  function getBillableModifierTotal(labels: string[]) {
+    return resolveModifierOptions(labels).reduce((sum, option) => sum + (option.price > 0 ? option.price : 0), 0);
+  }
+
+  const cartTotal = useMemo(() => {
+    return cartLines.reduce((sum, line) => {
+      const product = menuProductById.get(line.productId);
+      const baseTotal = product ? product.price * line.quantity : 0;
+      const modifierTotal = (getBillableModifierTotal(line.sauces) + getBillableModifierTotal(line.dressings)) * line.quantity;
+      return sum + baseTotal + modifierTotal;
+    }, 0);
+  }, [cartLines, menuProductById, modifierOptionByName]);
 
   const modalProduct = useMemo(
     () => (modalProductId ? menuProducts.find((item) => item.id === modalProductId) ?? null : null),
     [menuProducts, modalProductId],
   );
+  const modalProductCategory = useMemo(
+    () => (modalProduct?.categoryId ? categoryById.get(modalProduct.categoryId) ?? null : null),
+    [categoryById, modalProduct],
+  );
+  const modalProductSection = useMemo(
+    () => (modalProduct?.categoryId ? categorySectionById.get(modalProduct.categoryId) ?? (modalProduct.isPrepared ? 'DISHES' : 'PRODUCTS') : null),
+    [categorySectionById, modalProduct],
+  );
+  const modalProductAllowsModifiers = useMemo(
+    () => (modalProduct ? productSupportsModifiers(modalProduct, modalProductCategory, modalProductSection) : false),
+    [modalProduct, modalProductCategory, modalProductSection],
+  );
 
   function openProductModal(productId: number) {
     setModalProductId(productId);
     setModalNotes('');
-    setModalSauce('');
+    setModalSauces([]);
+    setModalDressings([]);
+    setModifierDialogSection(null);
+    setModifierDraftSelection([]);
     setProductModalOpen(true);
   }
 
@@ -403,7 +618,43 @@ export default function PosMenuPage() {
     setProductModalOpen(false);
     setModalProductId(null);
     setModalNotes('');
-    setModalSauce('');
+    setModalSauces([]);
+    setModalDressings([]);
+    setModifierDialogSection(null);
+    setModifierDraftSelection([]);
+  }
+
+  function openModifierDialog(section: ModifierSection) {
+    if (!modalProductAllowsModifiers) {
+      return;
+    }
+    setModifierDialogSection(section);
+    setModifierDraftSelection(section === 'SAUCES' ? modalSauces : modalDressings);
+  }
+
+  function closeModifierDialog() {
+    setModifierDialogSection(null);
+    setModifierDraftSelection([]);
+  }
+
+  function toggleModifier(optionLabel: string) {
+    setModifierDraftSelection((current) =>
+      current.includes(optionLabel) ? current.filter((item) => item !== optionLabel) : [...current, optionLabel].sort((a, b) => a.localeCompare(b)),
+    );
+  }
+
+  function applyModifierSelection() {
+    if (!modifierDialogSection) {
+      return;
+    }
+
+    if (modifierDialogSection === 'SAUCES') {
+      setModalSauces(modifierDraftSelection);
+    } else {
+      setModalDressings(modifierDraftSelection);
+    }
+
+    closeModifierDialog();
   }
 
   function confirmAddProduct() {
@@ -414,7 +665,8 @@ export default function PosMenuPage() {
     addToCart({
       productId: modalProductId,
       notes: modalNotes,
-      sauce: modalSauce ? modalSauce : null,
+      sauces: modalProductAllowsModifiers ? modalSauces : [],
+      dressings: modalProductAllowsModifiers ? modalDressings : [],
     });
     closeProductModal();
   }
@@ -488,6 +740,7 @@ export default function PosMenuPage() {
                 onClick={() => {
                   setSelectedGroupId(group.id);
                   setSelectedCategoryId(null);
+                  setSelectedLeafCategoryId(null);
                 }}
                 className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:px-5 sm:py-2.5 sm:text-base lg:text-lg ${
                   activeGroup?.id === group.id
@@ -510,7 +763,10 @@ export default function PosMenuPage() {
               <button
                 key={category.id}
                 type="button"
-                onClick={() => setSelectedCategoryId(category.id)}
+                onClick={() => {
+                  setSelectedCategoryId(category.id);
+                  setSelectedLeafCategoryId(null);
+                }}
                 className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
                   selectedCategory?.id === category.id
                     ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-950 dark:text-white'
@@ -526,6 +782,30 @@ export default function PosMenuPage() {
               </button>
             ))}
           </div>
+
+          {leafCategories.length ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {leafCategories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() => setSelectedLeafCategoryId(category.id)}
+                  className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
+                    activeLeafCategory?.id === category.id
+                      ? 'border-sky-300/40 bg-sky-500/10 text-sky-950 dark:text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <span className="flex items-center gap-2.5">
+                    <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeLeafCategory?.id === category.id ? 'border-sky-300/20 bg-sky-500/10 text-sky-700 dark:text-sky-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}>
+                      <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
+                    </span>
+                    <span>{category.name}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {productsForCategory.map((product) => (
@@ -629,12 +909,21 @@ export default function PosMenuPage() {
             <div className="mt-4 space-y-2">
               {cartLines.length ? (
                 cartLines.map((line) => {
-                  const product = menuProducts.find((item) => item.id === line.productId);
+                  const product = menuProductById.get(line.productId);
                   if (!product) {
                     return null;
                   }
 
-                  const details = [line.sauce ? `Salsa: ${line.sauce}` : '', line.notes].filter(Boolean).join(' • ');
+                  const billableModifierTotal = getBillableModifierTotal(line.sauces) + getBillableModifierTotal(line.dressings);
+                  const lineTotal = product.price * line.quantity + billableModifierTotal * line.quantity;
+                  const details = [
+                    line.sauces.length ? `Salsas: ${line.sauces.join(', ')}` : '',
+                    line.dressings.length ? `Aderezos: ${line.dressings.join(', ')}` : '',
+                    billableModifierTotal > 0 ? `Extras cobrables: ${formatMoney(billableModifierTotal)} por unidad` : '',
+                    line.notes,
+                  ]
+                    .filter(Boolean)
+                    .join(' • ');
 
                   return (
                     <div
@@ -648,7 +937,10 @@ export default function PosMenuPage() {
                           {details ? ` • ${details}` : ''}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-[76px] text-right text-xs font-semibold text-slate-600 dark:text-zinc-300">
+                          {formatMoney(lineTotal)}
+                        </div>
                         <button
                           type="button"
                           onClick={() => decrementLine(line.id)}
@@ -761,27 +1053,69 @@ export default function PosMenuPage() {
             ) : null}
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Salsa / aderezo</label>
-                <select
-                  value={modalSauce}
-                  onChange={(event) => setModalSauce(event.target.value)}
-                  className="mt-3 h-12 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-emerald-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:h-14 sm:text-base lg:h-16 lg:text-lg"
-                >
-                  {sauceOptions.map((option) => (
-                    <option key={option || 'none'} value={option}>
-                      {option ? option : 'Seleccionar'}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {modalProductAllowsModifiers ? (
+                <>
+                  <div className="space-y-3">
+                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Salsa</label>
+                    <button
+                      type="button"
+                      onClick={() => openModifierDialog('SAUCES')}
+                      className="flex h-14 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base lg:h-16 lg:text-lg"
+                    >
+                      <span className="truncate">{modalSauces.length ? `${modalSauces.length} salsa(s) seleccionadas` : 'Seleccionar salsas'}</span>
+                      <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
+                    </button>
+                    {modalSauces.length ? (
+                      <p className="text-xs text-slate-500 dark:text-zinc-500">{modalSauces.join(', ')}</p>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setModalSauces([])}
+                        disabled={!modalSauces.length}
+                        className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+                      >
+                        <AppIcon icon={X} className="h-3.5 w-3.5" />
+                        Quitar salsas
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Aderezo</label>
+                    <button
+                      type="button"
+                      onClick={() => openModifierDialog('DRESSINGS')}
+                      className="flex h-14 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base lg:h-16 lg:text-lg"
+                    >
+                      <span className="truncate">{modalDressings.length ? `${modalDressings.length} aderezo(s) seleccionados` : 'Seleccionar aderezos'}</span>
+                      <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
+                    </button>
+                    {modalDressings.length ? (
+                      <p className="text-xs text-slate-500 dark:text-zinc-500">{modalDressings.join(', ')}</p>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setModalDressings([])}
+                      disabled={!modalDressings.length}
+                      className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+                    >
+                      <AppIcon icon={X} className="h-3.5 w-3.5" />
+                      Quitar aderezos
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2">
+                  Este producto no aplica para salsas o aderezos.
+                </div>
+              )}
 
               <div className="sm:col-span-2">
                 <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Observaciones</label>
                 <textarea
                   value={modalNotes}
                   onChange={(event) => setModalNotes(event.target.value)}
-                  placeholder="Ej: sin cebolla, término medio, huevos al gusto..."
                   rows={4}
                   className="mt-3 w-full resize-none rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:text-base lg:text-lg"
                 />
@@ -802,6 +1136,94 @@ export default function PosMenuPage() {
                 className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base lg:h-16 lg:text-lg"
               >
                 Agregar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {productModalOpen && modifierDialogSection ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm dark:bg-black/70">
+          <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white p-5 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:p-6 lg:p-8">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Complementos</p>
+                <h2 className="mt-2 truncate font-display text-2xl text-slate-950 dark:text-white sm:text-3xl">
+                  {modifierDialogSection === 'SAUCES' ? 'Seleccionar salsa' : 'Seleccionar aderezo'}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeModifierDialog}
+                className="h-10 w-10 rounded-2xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:bg-white/[0.06]"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-6 grid max-h-[60vh] gap-3 overflow-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+              {activeModifierOptions.length ? (
+                activeModifierOptions.map((option) => (
+                  <button
+                    key={`${option.section}-${option.id}`}
+                    type="button"
+                    onClick={() => toggleModifier(option.label)}
+                    className={`rounded-[24px] border p-4 text-left shadow-sm transition dark:shadow-none ${
+                      modifierDraftSelection.includes(option.label)
+                        ? 'border-emerald-300/40 bg-emerald-500/10 hover:bg-emerald-500/15 dark:border-emerald-300/30 dark:bg-emerald-500/10'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:hover:bg-zinc-950/55'
+                    }`}
+                  >
+                    {option.imageUrl ? (
+                      <img
+                        src={option.imageUrl}
+                        alt={option.label}
+                        className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 object-cover dark:border-white/10"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="mb-4 flex aspect-[4/3] w-full items-center justify-center rounded-[18px] border border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-500">
+                        <AppIcon icon={modifierDialogSection === 'SAUCES' ? ChefHat : Salad} className="h-7 w-7" />
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-950 dark:text-white">{option.label}</p>
+                        {option.price > 0 ? (
+                          <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-200">Cobro adicional: {formatMoney(option.price)}</p>
+                        ) : (
+                          <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">Sin costo adicional</p>
+                        )}
+                      </div>
+                      {modifierDraftSelection.includes(option.label) ? (
+                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200">
+                          <AppIcon icon={Check} className="h-4 w-4" />
+                        </span>
+                      ) : null}
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2 xl:col-span-3">
+                  No hay {modifierDialogSection === 'SAUCES' ? 'salsas' : 'aderezos'} creados todavía en el catálogo.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={closeModifierDialog}
+                className="h-12 rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-14 sm:text-base"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={applyModifierSelection}
+                className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base"
+              >
+                Aplicar selección
               </button>
             </div>
           </div>

@@ -1,24 +1,19 @@
-import { ChefHat, ClipboardList, CookingPot, Droplets, Package, Pencil, Plus, Salad, Save, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ChefHat, ClipboardList, CookingPot, Droplets, GlassWater, Package, Pencil, Plus, Salad, Save, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AppIcon, type IconComponent } from '@/components/AppIcon';
 import { Panel } from '@/components/Panel';
 import {
   adjustInventoryItem,
-  createCategory,
   createInventoryItem,
   createPurchaseReceipt,
-  createProduct,
   createWasteRecord,
-  deleteCategory,
-  deleteProduct,
   getProductRecipe,
   getSubRecipeFormula,
   produceSubRecipe,
   saveProductRecipe,
   saveSubRecipeFormula,
-  updateCategory,
   updateInventoryItem,
-  updateProduct,
 } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import type {
@@ -30,23 +25,47 @@ import type {
   SubRecipeFormula,
 } from '@/types/restaurant';
 
-type MenuSection = 'DISHES' | 'PRODUCTS' | 'SAUCES' | 'DRESSINGS';
+type MenuSection = 'DISHES' | 'BEVERAGES' | 'PRODUCTS' | 'EXTRAS' | 'SAUCES' | 'DRESSINGS';
+type InventoryWorkspaceSection = 'GUIDED' | 'CATALOG' | 'RECIPES' | 'SUBRECIPES' | 'PURCHASES' | 'AUDIT';
 
-type CategoryFormState = {
-  parentId: string;
-  name: string;
-  color: string;
-  station: 'KITCHEN' | 'BAR' | 'PASTRY';
+const inventoryWorkspaceQueryMap: Record<InventoryWorkspaceSection, string> = {
+  GUIDED: 'guided',
+  CATALOG: 'catalog',
+  RECIPES: 'recipes',
+  SUBRECIPES: 'subrecipes',
+  PURCHASES: 'purchases',
+  AUDIT: 'audit',
 };
 
-type ProductFormState = {
-  categoryId: string;
-  name: string;
-  sku: string;
-  imageUrl: string;
-  price: string;
-  isPrepared: boolean;
+const menuSectionQueryMap: Record<MenuSection, string> = {
+  DISHES: 'dishes',
+  BEVERAGES: 'beverages',
+  PRODUCTS: 'products',
+  EXTRAS: 'extras',
+  SAUCES: 'sauces',
+  DRESSINGS: 'dressings',
 };
+
+function getInventoryWorkspaceFromQuery(value?: string | null): InventoryWorkspaceSection {
+  const normalized = String(value ?? '').trim().toLowerCase();
+
+  if (normalized === 'guided') return 'GUIDED';
+  if (normalized === 'recipes') return 'RECIPES';
+  if (normalized === 'subrecipes') return 'SUBRECIPES';
+  if (normalized === 'purchases') return 'PURCHASES';
+  if (normalized === 'audit') return 'AUDIT';
+  return 'CATALOG';
+}
+
+function getMenuSectionFromQuery(value?: string | null): MenuSection {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'beverages') return 'BEVERAGES';
+  if (normalized === 'products') return 'PRODUCTS';
+  if (normalized === 'extras') return 'EXTRAS';
+  if (normalized === 'sauces') return 'SAUCES';
+  if (normalized === 'dressings') return 'DRESSINGS';
+  return 'DISHES';
+}
 
 type InventoryFormState = {
   branchId: string;
@@ -99,22 +118,6 @@ type ProduceSubRecipeFormState = {
   outputQuantity: string;
   reference: string;
   notes: string;
-};
-
-const initialCategoryForm: CategoryFormState = {
-  parentId: '',
-  name: '',
-  color: '#f59e0b',
-  station: 'KITCHEN',
-};
-
-const initialProductForm: ProductFormState = {
-  categoryId: '',
-  name: '',
-  sku: '',
-  imageUrl: '',
-  price: '0',
-  isPrepared: true,
 };
 
 const initialInventoryForm: InventoryFormState = {
@@ -194,14 +197,34 @@ const sectionConfig: Record<
     defaultStation: 'KITCHEN',
     forcedPrepared: true,
   },
+  BEVERAGES: {
+    label: 'Bebidas',
+    description: 'Mantén bebidas en una familia propia para sus recetas, costos y control operativo.',
+    icon: GlassWater,
+    colorClass: 'border-cyan-300/35 bg-cyan-500/10 text-cyan-900 dark:text-white',
+    categoryTitle: 'Categorías de bebidas',
+    productTitle: 'Ventana de bebidas',
+    defaultStation: 'BAR',
+    forcedPrepared: false,
+  },
   PRODUCTS: {
     label: 'Productos',
-    description: 'Separa productos rápidos, empaquetados o no preparados en su propia ventana.',
+    description: 'Separa extras, empaquetados o complementos comerciales en su propia ventana.',
     icon: Package,
     colorClass: 'border-sky-300/35 bg-sky-500/10 text-sky-900 dark:text-white',
     categoryTitle: 'Categorías de productos',
     productTitle: 'Ventana de productos',
     defaultStation: 'BAR',
+    forcedPrepared: false,
+  },
+  EXTRAS: {
+    label: 'Extras',
+    description: 'Mantén extras y complementos cobrables como una familia propia para sus recetas y costos.',
+    icon: Plus,
+    colorClass: 'border-fuchsia-300/35 bg-fuchsia-500/10 text-fuchsia-900 dark:text-white',
+    categoryTitle: 'Categorías de extras',
+    productTitle: 'Ventana de extras',
+    defaultStation: 'KITCHEN',
     forcedPrepared: false,
   },
   SAUCES: {
@@ -216,7 +239,7 @@ const sectionConfig: Record<
   },
   DRESSINGS: {
     label: 'Aderezos',
-    description: 'Agrupa aderezos y complementos en una ventana separada dentro de Menús.',
+    description: 'Agrupa aderezos y complementos en una familia separada para control de recetas.',
     icon: Salad,
     colorClass: 'border-emerald-300/35 bg-emerald-500/10 text-emerald-900 dark:text-white',
     categoryTitle: 'Categorías de aderezos',
@@ -226,16 +249,59 @@ const sectionConfig: Record<
   },
 };
 
+const inventoryWorkspaceConfig: Record<
+  InventoryWorkspaceSection,
+  {
+    label: string;
+    description: string;
+    icon: IconComponent;
+    accentClass: string;
+  }
+> = {
+  GUIDED: {
+    label: '0. Proceso guiado',
+    description: 'Lleva el control desde el alta del insumo, la receta y la salida final como producto vendible.',
+    icon: ClipboardList,
+    accentClass: 'border-violet-300/35 bg-violet-500/10 text-violet-900 dark:text-white',
+  },
+  CATALOG: {
+    label: '1. Catálogo base',
+    description: 'Aquí creas y ordenas insumos o preparados antes de usarlos en cualquier otro proceso.',
+    icon: Package,
+    accentClass: 'border-amber-300/35 bg-amber-300/10 text-amber-900 dark:text-white',
+  },
+  RECIPES: {
+    label: '2. Recetas técnicas',
+    description: 'Define qué insumos consume cada platillo o producto al momento de vender.',
+    icon: ClipboardList,
+    accentClass: 'border-emerald-300/35 bg-emerald-500/10 text-emerald-900 dark:text-white',
+  },
+  SUBRECIPES: {
+    label: '3. Producción',
+    description: 'Convierte insumos en salsas, bases o preparados internos con su propia fórmula.',
+    icon: CookingPot,
+    accentClass: 'border-violet-300/35 bg-violet-500/10 text-violet-900 dark:text-white',
+  },
+  PURCHASES: {
+    label: '4. Compras y mermas',
+    description: 'Registra entradas formales de inventario y mermas operativas por separado.',
+    icon: TriangleAlert,
+    accentClass: 'border-rose-300/35 bg-rose-500/10 text-rose-900 dark:text-white',
+  },
+  AUDIT: {
+    label: '5. Ajustes y auditoría',
+    description: 'Revisa movimientos y registra ajustes manuales con referencia para trazabilidad.',
+    icon: Pencil,
+    accentClass: 'border-sky-300/35 bg-sky-500/10 text-sky-900 dark:text-white',
+  },
+};
+
 function normalizeLabel(value?: string | null) {
   return String(value ?? '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase();
-}
-
-function getSectionRootName(section: MenuSection) {
-  return sectionConfig[section].label;
 }
 
 function inferSectionFromName(name?: string | null): MenuSection | null {
@@ -248,6 +314,12 @@ function inferSectionFromName(name?: string | null): MenuSection | null {
   }
   if (normalized.includes('aderezo') || normalized.includes('aliño') || normalized.includes('dressing')) {
     return 'DRESSINGS';
+  }
+  if (normalized === 'extras' || normalized === 'extra') {
+    return 'EXTRAS';
+  }
+  if (normalized === 'bebidas' || normalized === 'bebida') {
+    return 'BEVERAGES';
   }
   if (normalized === 'platillos' || normalized === 'platillo') {
     return 'DISHES';
@@ -297,11 +369,8 @@ function resolveProductSection(product: MenuProduct, categoryById: Map<number, M
   return product.isPrepared ? 'DISHES' : 'PRODUCTS';
 }
 
-function getPreparedValueForSection(section: MenuSection) {
-  return sectionConfig[section].forcedPrepared;
-}
-
 export default function InventoryPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const user = useSessionStore((state) => state.user);
   const snapshot = useSessionStore((state) => state.snapshot);
   const refreshSnapshot = useSessionStore((state) => state.refreshSnapshot);
@@ -315,10 +384,7 @@ export default function InventoryPage() {
   const currencySymbol = snapshot?.brand.currencySymbol ?? 'Q';
 
   const [activeSection, setActiveSection] = useState<MenuSection>('DISHES');
-  const [categoryForm, setCategoryForm] = useState<CategoryFormState>(initialCategoryForm);
-  const [productForm, setProductForm] = useState<ProductFormState>(initialProductForm);
-  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
-  const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [activeInventoryWorkspace, setActiveInventoryWorkspace] = useState<InventoryWorkspaceSection>('CATALOG');
   const [inventoryForm, setInventoryForm] = useState<InventoryFormState>(initialInventoryForm);
   const [editingInventoryId, setEditingInventoryId] = useState<number | null>(null);
   const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentFormState>(initialAdjustmentForm);
@@ -333,8 +399,6 @@ export default function InventoryPage() {
   const [subRecipeLines, setSubRecipeLines] = useState<RecipeDraftLine[]>([]);
   const [produceSubRecipeForm, setProduceSubRecipeForm] = useState<ProduceSubRecipeFormState>(initialProduceSubRecipeForm);
   const [loadingRecipe, setLoadingRecipe] = useState(false);
-  const [submittingCategory, setSubmittingCategory] = useState(false);
-  const [submittingProduct, setSubmittingProduct] = useState(false);
   const [submittingInventory, setSubmittingInventory] = useState(false);
   const [savingRecipe, setSavingRecipe] = useState(false);
   const [loadingSubRecipe, setLoadingSubRecipe] = useState(false);
@@ -344,6 +408,9 @@ export default function InventoryPage() {
   const [submittingWaste, setSubmittingWaste] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const requestedInventoryWorkspace = getInventoryWorkspaceFromQuery(searchParams.get('view'));
+  const requestedMenuSection = getMenuSectionFromQuery(searchParams.get('menuSection'));
+  const requestedRecipeProductId = Number(searchParams.get('productId') || '0');
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
 
@@ -359,20 +426,6 @@ export default function InventoryPage() {
     return products.filter((product) => resolveProductSection(product, categoryById) === activeSection);
   }, [activeSection, categoryById, products]);
 
-  const sectionRoots = useMemo(() => {
-    const roots = new Map<MenuSection, MenuCategory | null>();
-    (Object.keys(sectionConfig) as MenuSection[]).forEach((section) => {
-      roots.set(
-        section,
-        categories.find(
-          (category) => !category.parentId && normalizeLabel(category.name) === normalizeLabel(getSectionRootName(section)),
-        ) ?? null,
-      );
-    });
-    return roots;
-  }, [categories]);
-
-  const categoryNameById = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
   const branchNameById = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.name])), [branches]);
 
   const sectionCounts = useMemo(() => {
@@ -389,12 +442,41 @@ export default function InventoryPage() {
   }, [categories, categoryById, categorySectionById, products]);
 
   const currentSection = sectionConfig[activeSection];
-  const currentRoot = sectionRoots.get(activeSection) ?? null;
   const currentBranchId = recipeBranchId || String(user?.branchId ?? branches[0]?.id ?? '');
 
   const branchInventoryItems = useMemo(
     () => inventoryItems.filter((item) => !currentBranchId || String(item.branchId) === currentBranchId),
     [currentBranchId, inventoryItems],
+  );
+  const rawBranchInventoryItems = useMemo(
+    () => branchInventoryItems.filter((item) => item.itemType === 'RAW'),
+    [branchInventoryItems],
+  );
+  const subRecipeInventoryItems = useMemo(
+    () => branchInventoryItems.filter((item) => item.itemType === 'SUBRECIPE'),
+    [branchInventoryItems],
+  );
+  const validRecipeLineCount = useMemo(
+    () =>
+      recipeLines.filter(
+        (line) =>
+          Number.isInteger(Number(line.inventoryItemId)) &&
+          Number(line.inventoryItemId) > 0 &&
+          Number.isFinite(Number(line.quantity)) &&
+          Number(line.quantity) > 0,
+      ).length,
+    [recipeLines],
+  );
+  const validSubRecipeLineCount = useMemo(
+    () =>
+      subRecipeLines.filter(
+        (line) =>
+          Number.isInteger(Number(line.inventoryItemId)) &&
+          Number(line.inventoryItemId) > 0 &&
+          Number.isFinite(Number(line.quantity)) &&
+          Number(line.quantity) > 0,
+      ).length,
+    [subRecipeLines],
   );
 
   const recentInventoryMovements = useMemo(
@@ -412,9 +494,32 @@ export default function InventoryPage() {
     [currentBranchId, wasteRecords],
   );
 
-  const parentOptions = useMemo(() => {
-    return visibleCategories.filter((category) => category.id !== editingCategoryId);
-  }, [editingCategoryId, visibleCategories]);
+  const inventoryWorkspaceCounts = useMemo(
+    () => ({
+      GUIDED:
+        Number(rawBranchInventoryItems.length > 0) +
+        Number(visibleProducts.length > 0) +
+        Number(validRecipeLineCount > 0 || (recipeData?.ingredients.length ?? 0) > 0) +
+        Number(subRecipeInventoryItems.length > 0) +
+        Number(branchPurchaseReceipts.length > 0 || recentInventoryMovements.length > 0),
+      CATALOG: branchInventoryItems.length,
+      RECIPES: visibleProducts.length,
+      SUBRECIPES: subRecipeInventoryItems.length,
+      PURCHASES: branchPurchaseReceipts.length + branchWasteRecords.length,
+      AUDIT: recentInventoryMovements.length,
+    }),
+    [
+      branchInventoryItems.length,
+      branchPurchaseReceipts.length,
+      branchWasteRecords.length,
+      rawBranchInventoryItems.length,
+      recentInventoryMovements.length,
+      recipeData?.ingredients.length,
+      subRecipeInventoryItems.length,
+      validRecipeLineCount,
+      visibleProducts.length,
+    ],
+  );
 
   useEffect(() => {
     if (!recipeBranchId) {
@@ -427,20 +532,59 @@ export default function InventoryPage() {
     }
   }, [branches, recipeBranchId, user?.branchId]);
 
-  function resetCategoryForm(section: MenuSection = activeSection) {
-    setEditingCategoryId(null);
-    setCategoryForm({
-      ...initialCategoryForm,
-      station: sectionConfig[section].defaultStation,
+  useEffect(() => {
+    if (activeInventoryWorkspace !== requestedInventoryWorkspace) {
+      setActiveInventoryWorkspace(requestedInventoryWorkspace);
+    }
+  }, [activeInventoryWorkspace, requestedInventoryWorkspace]);
+
+  useEffect(() => {
+    if (activeSection !== requestedMenuSection) {
+      setActiveSection(requestedMenuSection);
+    }
+  }, [activeSection, requestedMenuSection]);
+
+  function switchInventoryWorkspace(section: InventoryWorkspaceSection) {
+    setActiveInventoryWorkspace(section);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('view', inventoryWorkspaceQueryMap[section]);
+      return next;
     });
   }
 
-  function resetProductForm(section: MenuSection = activeSection) {
-    setEditingProductId(null);
-    setProductForm({
-      ...initialProductForm,
-      isPrepared: getPreparedValueForSection(section),
+  function prepareInventoryCreation(itemType: InventoryFormState['itemType']) {
+    switchInventoryWorkspace('GUIDED');
+    setEditingInventoryId(null);
+    setInventoryForm({
+      ...initialInventoryForm,
+      branchId: currentBranchId,
+      itemType,
     });
+    setError(null);
+    setSuccess(null);
+  }
+
+  function openGuidedRecipe(productId?: number | null) {
+    const targetId = productId ?? recipeProductId ?? visibleProducts[0]?.id ?? null;
+    if (!targetId) {
+      setError('Primero crea un producto final para poder definir su receta.');
+      setSuccess(null);
+      return;
+    }
+
+    void loadRecipe(targetId, currentBranchId);
+  }
+
+  function openGuidedSubRecipe(inventoryItemId?: number | null) {
+    const targetId = inventoryItemId ?? subRecipeItemId ?? subRecipeInventoryItems[0]?.id ?? null;
+    if (!targetId) {
+      setError('Primero crea un preparado tipo subreceta para poder definir su formula.');
+      setSuccess(null);
+      return;
+    }
+
+    void loadSubRecipe(targetId, currentBranchId);
   }
 
   function resetInventoryForm() {
@@ -475,10 +619,21 @@ export default function InventoryPage() {
   }
 
   async function loadRecipe(productId: number, branchId = currentBranchId) {
+    switchInventoryWorkspace('RECIPES');
     setLoadingRecipe(true);
     setRecipeProductId(productId);
     setError(null);
     setSuccess(null);
+    const selectedProduct = products.find((product) => product.id === productId);
+    const selectedSection = selectedProduct ? resolveProductSection(selectedProduct, categoryById) : activeSection;
+    setActiveSection(selectedSection);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('view', 'recipes');
+      next.set('menuSection', menuSectionQueryMap[selectedSection]);
+      next.set('productId', String(productId));
+      return next;
+    });
 
     try {
       const recipe = await getProductRecipe(productId, branchId ? Number(branchId) : null);
@@ -502,6 +657,7 @@ export default function InventoryPage() {
   }
 
   async function loadSubRecipe(inventoryItemId: number, branchId = currentBranchId) {
+    switchInventoryWorkspace('SUBRECIPES');
     setLoadingSubRecipe(true);
     setSubRecipeItemId(inventoryItemId);
     setError(null);
@@ -536,178 +692,10 @@ export default function InventoryPage() {
     setActiveSection(section);
     setError(null);
     setSuccess(null);
-    resetCategoryForm(section);
-    resetProductForm(section);
-  }
-
-  function startCategoryEdit(categoryId: number) {
-    const category = categories.find((item) => item.id === categoryId);
-    if (!category) {
-      return;
-    }
-
-    const section = categorySectionById.get(category.id) ?? 'DISHES';
-    const parentCategory = category.parentId ? categoryById.get(category.parentId) ?? null : null;
-    const parentId = parentCategory && !isSectionRootCategory(parentCategory) ? String(parentCategory.id) : '';
-
-    setActiveSection(section);
-    setEditingCategoryId(category.id);
-    setCategoryForm({
-      parentId,
-      name: category.name,
-      color: category.color ?? '#f59e0b',
-      station: category.station,
-    });
-    setError(null);
-    setSuccess(null);
-  }
-
-  function startProductEdit(productId: number) {
-    const product = products.find((item) => item.id === productId);
-    if (!product) {
-      return;
-    }
-
-    const section = resolveProductSection(product, categoryById);
-    const category = product.categoryId ? categoryById.get(product.categoryId) ?? null : null;
-    const categoryId = category && !isSectionRootCategory(category) ? String(category.id) : '';
-
-    setActiveSection(section);
-    setEditingProductId(product.id);
-    setProductForm({
-      categoryId,
-      name: product.name,
-      sku: product.sku ?? '',
-      imageUrl: product.imageUrl ?? '',
-      price: String(product.price),
-      isPrepared: getPreparedValueForSection(section),
-    });
-    setError(null);
-    setSuccess(null);
-  }
-
-  async function ensureSectionRootCategory(section: MenuSection, station: CategoryFormState['station']) {
-    const existingRoot = sectionRoots.get(section);
-    if (existingRoot) {
-      return existingRoot.id;
-    }
-
-    const created = (await createCategory({
-      name: getSectionRootName(section),
-      parentId: null,
-      color: null,
-      station,
-    })) as { id: number };
-
-    return created.id;
-  }
-
-  async function handleCategorySubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmittingCategory(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      const rootId = await ensureSectionRootCategory(activeSection, categoryForm.station);
-      const resolvedParentId = categoryForm.parentId ? Number(categoryForm.parentId) : rootId;
-      const payload = {
-        parentId: resolvedParentId,
-        name: categoryForm.name,
-        color: categoryForm.color || null,
-        station: categoryForm.station,
-      };
-
-      if (editingCategoryId) {
-        await updateCategory(editingCategoryId, payload);
-        setSuccess(`Categoría de ${currentSection.label.toLowerCase()} actualizada correctamente.`);
-      } else {
-        await createCategory(payload);
-        setSuccess(`Categoría de ${currentSection.label.toLowerCase()} creada correctamente.`);
-      }
-
-      await refreshSnapshot();
-      resetCategoryForm(activeSection);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible guardar la categoría.');
-    } finally {
-      setSubmittingCategory(false);
-    }
-  }
-
-  async function handleProductSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmittingProduct(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      const rootId = await ensureSectionRootCategory(activeSection, currentSection.defaultStation);
-      const payload = {
-        categoryId: productForm.categoryId ? Number(productForm.categoryId) : rootId,
-        name: productForm.name,
-        sku: productForm.sku || null,
-        imageUrl: productForm.imageUrl || null,
-        price: Number(productForm.price || '0'),
-        isPrepared: getPreparedValueForSection(activeSection),
-      };
-
-      if (editingProductId) {
-        await updateProduct(editingProductId, payload);
-        setSuccess(`${currentSection.label.slice(0, -1)} actualizado correctamente.`);
-      } else {
-        await createProduct(payload);
-        setSuccess(`${currentSection.label.slice(0, -1)} creado correctamente.`);
-      }
-
-      await refreshSnapshot();
-      resetProductForm(activeSection);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible guardar el producto.');
-    } finally {
-      setSubmittingProduct(false);
-    }
-  }
-
-  async function handleDeleteCategory(categoryId: number) {
-    setSubmittingCategory(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      await deleteCategory(categoryId);
-      await refreshSnapshot();
-      if (editingCategoryId === categoryId) {
-        resetCategoryForm(activeSection);
-      }
-      setSuccess('Categoría eliminada correctamente.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible eliminar la categoría.');
-    } finally {
-      setSubmittingCategory(false);
-    }
-  }
-
-  async function handleDeleteProduct(productId: number) {
-    setSubmittingProduct(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      await deleteProduct(productId);
-      await refreshSnapshot();
-      if (editingProductId === productId) {
-        resetProductForm(activeSection);
-      }
-      setSuccess('Elemento eliminado correctamente.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible eliminar el elemento.');
-    } finally {
-      setSubmittingProduct(false);
-    }
   }
 
   function startInventoryEdit(item: InventoryItem) {
+    switchInventoryWorkspace('CATALOG');
     setEditingInventoryId(item.id);
     setInventoryForm({
       branchId: String(item.branchId),
@@ -724,6 +712,7 @@ export default function InventoryPage() {
   }
 
   function selectAdjustmentItem(item: InventoryItem) {
+    switchInventoryWorkspace('AUDIT');
     setAdjustmentForm({
       ...initialAdjustmentForm,
       inventoryItemId: String(item.id),
@@ -822,6 +811,7 @@ export default function InventoryPage() {
 
   async function handlePurchaseSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    switchInventoryWorkspace('PURCHASES');
     setSubmittingPurchase(true);
     setError(null);
     setSuccess(null);
@@ -853,6 +843,7 @@ export default function InventoryPage() {
 
   async function handleWasteSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    switchInventoryWorkspace('PURCHASES');
     setSubmittingWaste(true);
     setError(null);
     setSuccess(null);
@@ -1012,6 +1003,12 @@ export default function InventoryPage() {
   }, [currentBranchId, recipeProductId]);
 
   useEffect(() => {
+    if (requestedInventoryWorkspace === 'RECIPES' && requestedRecipeProductId > 0 && recipeProductId !== requestedRecipeProductId) {
+      void loadRecipe(requestedRecipeProductId, currentBranchId);
+    }
+  }, [currentBranchId, recipeProductId, requestedInventoryWorkspace, requestedRecipeProductId]);
+
+  useEffect(() => {
     if (subRecipeItemId && currentBranchId) {
       void loadSubRecipe(subRecipeItemId, currentBranchId);
     }
@@ -1019,8 +1016,21 @@ export default function InventoryPage() {
 
   return (
     <div className="space-y-6">
-      <Panel title="Menús" subtitle="Ahora el módulo maneja submenús separados para trabajar platillos, productos, salsas y aderezos en ventanas diferentes.">
-        <div className="flex flex-wrap gap-3">
+      <section className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-zinc-950/45">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">Inventario operativo</p>
+            <h2 className="mt-2 text-xl font-semibold text-slate-950 dark:text-white">Recetas y consumo por tipo de producto</h2>
+            <p className="mt-2 max-w-3xl text-sm text-slate-600 dark:text-zinc-400">
+              Aquí trabajas insumos, recetas, producción, compras y auditoría. Usa esta vista para decidir qué familia de productos vas a recetar y controlar.
+            </p>
+          </div>
+          <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400">
+            Familia activa: <strong>{currentSection.label}</strong>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-3">
           {(Object.keys(sectionConfig) as MenuSection[]).map((section) => {
             const config = sectionConfig[section];
             const isActive = activeSection === section;
@@ -1029,7 +1039,11 @@ export default function InventoryPage() {
                 key={section}
                 type="button"
                 onClick={() => handleSectionChange(section)}
-                className={`rounded-[24px] border px-4 py-3 text-left transition sm:min-w-[220px] ${isActive ? config.colorClass : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'}`}
+                className={`rounded-[24px] border px-4 py-3 text-left transition sm:min-w-[220px] ${
+                  isActive
+                    ? config.colorClass
+                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
+                }`}
               >
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl border border-black/5 bg-white/70 dark:border-white/10 dark:bg-black/20">
@@ -1038,7 +1052,7 @@ export default function InventoryPage() {
                   <div>
                     <p className="font-semibold">{config.label}</p>
                     <p className="mt-1 text-xs opacity-80">
-                      {sectionCounts[section].categories} categorías • {sectionCounts[section].products} elementos
+                      {sectionCounts[section].products} productos disponibles para recetar
                     </p>
                   </div>
                 </div>
@@ -1046,321 +1060,66 @@ export default function InventoryPage() {
             );
           })}
         </div>
-      </Panel>
+      </section>
 
       {error ? <div className="rounded-[20px] border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-200">{error}</div> : null}
       {success ? <div className="rounded-[20px] border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-200">{success}</div> : null}
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Panel title={currentSection.categoryTitle} subtitle={currentSection.description}>
-          <form className="space-y-4" onSubmit={(event) => void handleCategorySubmit(event)}>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">Nombre de categoría</span>
-                <input
-                  value={categoryForm.name}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                  placeholder={`Ej. ${activeSection === 'SAUCES' ? 'Picantes' : activeSection === 'DRESSINGS' ? 'Cremosos' : activeSection === 'PRODUCTS' ? 'Bebidas embotelladas' : 'Entradas'}`}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">Categoría padre</span>
-                <select
-                  value={categoryForm.parentId}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, parentId: event.target.value }))}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                >
-                  <option value="">{currentRoot ? `Directo en ${currentSection.label}` : `Crear directo en ${currentSection.label}`}</option>
-                  {parentOptions.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+      <div className="space-y-6">
+        <section className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-zinc-950/45">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">Procesos de inventario</p>
+              <h2 className="mt-2 text-xl font-semibold text-slate-950 dark:text-white">Trabaja inventario por etapas y no todo mezclado</h2>
+              <p className="mt-2 max-w-3xl text-sm text-slate-600 dark:text-zinc-400">
+                Primero crea el catálogo de insumos. Después define recetas, produce subrecetas, registra compras o mermas y por último audita movimientos.
+              </p>
             </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">Área de preparación</span>
-                <select
-                  value={categoryForm.station}
-                  onChange={(event) =>
-                    setCategoryForm((current) => ({ ...current, station: event.target.value as CategoryFormState['station'] }))
-                  }
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                >
-                  <option value="KITCHEN">Cocina</option>
-                  <option value="BAR">Bar</option>
-                  <option value="PASTRY">Pastelería</option>
-                </select>
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">Color</span>
-                <input
-                  type="color"
-                  value={categoryForm.color}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, color: event.target.value }))}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                />
-              </label>
+            <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400">
+              Sucursal activa para procesos: <strong>{branchNameById.get(Number(currentBranchId)) ?? 'No definida'}</strong>
             </div>
-
-            <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400">
-              Si no eliges categoría padre, el sistema la coloca dentro del submenú <strong>{currentSection.label}</strong> automáticamente.
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="submit"
-                disabled={submittingCategory}
-                className="inline-flex h-12 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-5 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 disabled:opacity-50 dark:text-white"
-              >
-                <AppIcon icon={editingCategoryId ? Pencil : Plus} className="h-4 w-4" />
-                {submittingCategory ? 'Guardando...' : editingCategoryId ? 'Actualizar categoría' : `Crear categoría en ${currentSection.label}`}
-              </button>
-              {editingCategoryId ? (
-                <button
-                  type="button"
-                  onClick={() => resetCategoryForm(activeSection)}
-                  className="inline-flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
-                >
-                  <AppIcon icon={X} className="h-4 w-4" />
-                  Cancelar
-                </button>
-              ) : null}
-            </div>
-          </form>
-
-          <div className="mt-6 space-y-3">
-            {visibleCategories.length ? (
-              visibleCategories.map((category) => {
-                const Icon = stationIcon[category.station];
-                const parentCategory = category.parentId ? categoryById.get(category.parentId) ?? null : null;
-                const parentLabel = parentCategory && !isSectionRootCategory(parentCategory) ? categoryNameById.get(parentCategory.id) : 'Principal';
-
-                return (
-                  <article key={category.id} className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45 dark:shadow-none">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="flex items-start gap-3">
-                        <div
-                          className="flex h-10 w-10 items-center justify-center rounded-2xl"
-                          style={{ backgroundColor: `${category.color ?? '#f59e0b'}22`, color: category.color ?? '#f59e0b' }}
-                        >
-                          <AppIcon icon={Icon} className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-slate-950 dark:text-white">{category.name}</p>
-                          <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">
-                            {stationLabel[category.station]} • {parentLabel}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => startCategoryEdit(category.id)}
-                          className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
-                        >
-                          <AppIcon icon={Pencil} className="h-4 w-4" />
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteCategory(category.id)}
-                          disabled={submittingCategory}
-                          className="inline-flex h-10 items-center gap-2 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-3 text-sm text-rose-200 transition hover:bg-rose-500/15 disabled:opacity-50"
-                        >
-                          <AppIcon icon={Trash2} className="h-4 w-4" />
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })
-            ) : (
-              <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500">
-                Aún no hay categorías creadas para {currentSection.label.toLowerCase()}.
-              </div>
-            )}
           </div>
-        </Panel>
 
-        <Panel title={currentSection.productTitle} subtitle={`Cada submenú mantiene sus elementos en una ventana distinta dentro de Menús. ${currentSection.description}`}>
-          <form className="space-y-4" onSubmit={(event) => void handleProductSubmit(event)}>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">Nombre</span>
-                <input
-                  value={productForm.name}
-                  onChange={(event) => setProductForm((current) => ({ ...current, name: event.target.value }))}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                  placeholder={`Ej. ${activeSection === 'SAUCES' ? 'Salsa barbacoa' : activeSection === 'DRESSINGS' ? 'Aderezo ranch' : activeSection === 'PRODUCTS' ? 'Agua pura 600ml' : 'Hamburguesa doble'}`}
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">Categoría</span>
-                <select
-                  value={productForm.categoryId}
-                  onChange={(event) => setProductForm((current) => ({ ...current, categoryId: event.target.value }))}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                >
-                  <option value="">{currentRoot ? `Sin subcategoría visible (queda dentro de ${currentSection.label})` : `Usar raíz de ${currentSection.label}`}</option>
-                  {visibleCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">SKU</span>
-                <input
-                  value={productForm.sku}
-                  onChange={(event) => setProductForm((current) => ({ ...current, sku: event.target.value }))}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                  placeholder="SKU opcional"
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm text-slate-700 dark:text-zinc-300">Precio</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={productForm.price}
-                  onChange={(event) => setProductForm((current) => ({ ...current, price: event.target.value }))}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                />
-              </label>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-white/10 dark:bg-black/20">
-                <p className="text-xs uppercase tracking-[0.28em] text-slate-500 dark:text-zinc-500">Tipo</p>
-                <p className="mt-2 text-sm font-semibold text-slate-950 dark:text-white">
-                  {getPreparedValueForSection(activeSection) ? 'Requiere preparación' : 'No requiere preparación'}
-                </p>
-                <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">Este valor se controla automáticamente por la ventana activa.</p>
-              </div>
-            </div>
-
-            <label className="space-y-2">
-              <span className="text-sm text-slate-700 dark:text-zinc-300">Imagen</span>
-              <input
-                value={productForm.imageUrl}
-                onChange={(event) => setProductForm((current) => ({ ...current, imageUrl: event.target.value }))}
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
-                placeholder="https://..."
-              />
-            </label>
-
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="submit"
-                disabled={submittingProduct}
-                className="inline-flex h-12 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-5 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 disabled:opacity-50 dark:text-white"
-              >
-                <AppIcon icon={editingProductId ? Pencil : Plus} className="h-4 w-4" />
-                {submittingProduct ? 'Guardando...' : editingProductId ? 'Actualizar elemento' : `Crear en ${currentSection.label}`}
-              </button>
-              {editingProductId ? (
+          <div className="mt-5 grid gap-3 lg:grid-cols-5">
+            {(Object.keys(inventoryWorkspaceConfig) as InventoryWorkspaceSection[]).map((section) => {
+              const config = inventoryWorkspaceConfig[section];
+              const isActive = activeInventoryWorkspace === section;
+              return (
                 <button
+                  key={section}
                   type="button"
-                  onClick={() => resetProductForm(activeSection)}
-                  className="inline-flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+                  onClick={() => switchInventoryWorkspace(section)}
+                  className={`rounded-[24px] border px-4 py-4 text-left transition ${
+                    isActive
+                      ? `${config.accentClass} shadow-sm`
+                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.05]'
+                  }`}
                 >
-                  <AppIcon icon={X} className="h-4 w-4" />
-                  Cancelar
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-current/15 bg-white/50 dark:bg-black/20">
+                        <AppIcon icon={config.icon} className="h-5 w-5" />
+                      </div>
+                      <p className="mt-3 text-sm font-semibold">{config.label}</p>
+                      <p className="mt-1 text-xs opacity-80">{config.description}</p>
+                    </div>
+                    <span className="rounded-2xl border border-current/15 px-3 py-1 text-xs font-semibold">
+                      {inventoryWorkspaceCounts[section]}
+                    </span>
+                  </div>
                 </button>
-              ) : null}
-            </div>
-          </form>
-
-          <div className="mt-6 space-y-3">
-            {visibleProducts.length ? (
-              visibleProducts.map((product) => {
-                const category = product.categoryId ? categoryById.get(product.categoryId) ?? null : null;
-                return (
-                  <article key={product.id} className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45 dark:shadow-none">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-slate-950 dark:text-white">{product.name}</p>
-                        <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">
-                          {category && !isSectionRootCategory(category) ? category.name : currentSection.label} • {stationLabel[product.station]}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void loadRecipe(product.id)}
-                          className="inline-flex h-10 items-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-3 text-sm text-emerald-800 transition hover:bg-emerald-500/15 dark:text-emerald-200"
-                        >
-                          <AppIcon icon={ClipboardList} className="h-4 w-4" />
-                          Receta
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => startProductEdit(product.id)}
-                          className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
-                        >
-                          <AppIcon icon={Pencil} className="h-4 w-4" />
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteProduct(product.id)}
-                          disabled={submittingProduct}
-                          className="inline-flex h-10 items-center gap-2 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-3 text-sm text-rose-200 transition hover:bg-rose-500/15 disabled:opacity-50"
-                        >
-                          <AppIcon icon={Trash2} className="h-4 w-4" />
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-600 dark:text-zinc-300 md:grid-cols-4">
-                      <div>
-                        <p className="text-slate-500 dark:text-zinc-500">Precio</p>
-                        <p className="mt-1 text-slate-950 dark:text-white">
-                          {currencySymbol} {product.price}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 dark:text-zinc-500">SKU</p>
-                        <p className="mt-1 text-slate-950 dark:text-white">{product.sku || 'No definido'}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 dark:text-zinc-500">Preparación</p>
-                        <p className="mt-1 text-slate-950 dark:text-white">{product.isPrepared ? 'Sí' : 'No'}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 dark:text-zinc-500">Imagen</p>
-                        <p className="mt-1 truncate text-slate-950 dark:text-white">{product.imageUrl || 'Sin imagen'}</p>
-                      </div>
-                    </div>
-
-                    {recipeProductId === product.id && recipeData ? (
-                      <div className="mt-4 rounded-[20px] border border-emerald-300/25 bg-emerald-500/5 px-4 py-3 text-sm text-slate-700 dark:text-zinc-200">
-                        Costo estimado por receta en {branchNameById.get(recipeData.branchId) ?? 'sucursal'}: <strong>{currencySymbol} {recipeData.estimatedCost.toFixed(2)}</strong>
-                      </div>
-                    ) : null}
-                  </article>
-                );
-              })
-            ) : (
-              <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500">
-                Aún no hay elementos creados en la ventana de {currentSection.label.toLowerCase()}.
-              </div>
-            )}
+              );
+            })}
           </div>
-        </Panel>
-      </div>
+        </section>
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-        <Panel title="Insumos e inventario" subtitle="Controla ingredientes, costo y stock por sucursal.">
+        <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+          <div className="space-y-6">
+            <div className="rounded-[24px] border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-sm text-slate-700 dark:text-zinc-200">
+              <strong>Paso 1:</strong> aquí das de alta los insumos y preparados que después usarás en recetas, compras, producción y ajustes.
+            </div>
+
+            <Panel title="Insumos e inventario" subtitle="Crea y edita insumos base o preparados por sucursal. Este es el punto de partida del proceso.">
           <form className="space-y-4" onSubmit={(event) => void handleInventorySubmit(event)}>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="space-y-2">
@@ -1552,10 +1311,262 @@ export default function InventoryPage() {
               </div>
             )}
           </div>
-        </Panel>
+            </Panel>
+          </div>
 
-        <div className="space-y-6">
-          <Panel title="Receta técnica" subtitle="Vincula ingredientes al platillo y descuenta inventario automáticamente al vender.">
+          <div className="space-y-6">
+            <div className={`rounded-[24px] border px-4 py-3 text-sm ${inventoryWorkspaceConfig[activeInventoryWorkspace].accentClass}`}>
+              <strong>{inventoryWorkspaceConfig[activeInventoryWorkspace].label}:</strong> {inventoryWorkspaceConfig[activeInventoryWorkspace].description}
+            </div>
+
+            {activeInventoryWorkspace === 'GUIDED' ? (
+              <Panel title="Proceso guiado y controlado" subtitle="Sigue este orden para construir un producto con trazabilidad: insumo, preparado opcional, producto final, receta y movimiento operativo.">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-[24px] border border-violet-300/25 bg-violet-500/10 p-4 text-sm text-slate-700 dark:text-zinc-200">
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-violet-700 dark:text-violet-200">Avance del flujo</p>
+                    <p className="mt-3 text-3xl font-semibold text-slate-950 dark:text-white">{inventoryWorkspaceCounts.GUIDED} / 5</p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                      Sucursal de trabajo: <strong>{branchNameById.get(Number(currentBranchId)) ?? 'No definida'}</strong>
+                    </p>
+                  </div>
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400">
+                    Orden sugerido: <strong>1)</strong> crea el insumo, <strong>2)</strong> selecciona el producto final, <strong>3)</strong> define la receta,{' '}
+                    <strong>4)</strong> si aplica crea el preparado interno, <strong>5)</strong> registra compra, producción o ajuste.
+                  </div>
+                </div>
+
+                <div className="mt-5 space-y-4">
+                  <article className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950 dark:text-white">Paso 1. Alta del insumo base</p>
+                        <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+                          Registra la materia prima que compraras o controlaras en inventario antes de usarla en recetas.
+                        </p>
+                      </div>
+                      <span className="rounded-2xl border border-current/15 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                        {rawBranchInventoryItems.length ? `${rawBranchInventoryItems.length} insumos listos` : 'Pendiente'}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => prepareInventoryCreation('RAW')}
+                        className="inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 dark:text-white"
+                      >
+                        <AppIcon icon={Plus} className="h-4 w-4" />
+                        Preparar formulario de insumo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => switchInventoryWorkspace('PURCHASES')}
+                        className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200"
+                      >
+                        <AppIcon icon={Save} className="h-4 w-4" />
+                        Ir a compras formales
+                      </button>
+                    </div>
+                  </article>
+
+                  <article className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950 dark:text-white">Paso 2. Seleccionar el producto final</p>
+                        <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+                          Elige la familia y el producto final que llevara receta tecnica para consumir inventario al venderse.
+                        </p>
+                      </div>
+                      <span className="rounded-2xl border border-current/15 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                        {visibleProducts.length ? `${visibleProducts.length} en ${currentSection.label}` : 'Pendiente'}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {(Object.keys(sectionConfig) as MenuSection[]).map((section) => (
+                        <button
+                          key={section}
+                          type="button"
+                          onClick={() => handleSectionChange(section)}
+                          className={`inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-semibold transition ${
+                            activeSection === section
+                              ? sectionConfig[section].colorClass
+                              : 'border-slate-200 bg-white text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200'
+                          }`}
+                        >
+                          <AppIcon icon={sectionConfig[section].icon} className="h-4 w-4" />
+                          {sectionConfig[section].label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400">
+                      Usa esta selección para enfocar las recetas de <strong>{currentSection.label.toLowerCase()}</strong> sin mezclar otros tipos de productos.
+                    </div>
+                  </article>
+
+                  <article className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950 dark:text-white">Paso 3. Definir la receta tecnica del producto</p>
+                        <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+                          Vincula los insumos o preparados que consumira el producto cuando se venda.
+                        </p>
+                      </div>
+                      <span className="rounded-2xl border border-current/15 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                        {validRecipeLineCount || (recipeData?.ingredients.length ?? 0) ? 'En configuracion' : 'Pendiente'}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {visibleProducts.slice(0, 5).map((product) => (
+                        <button
+                          key={product.id}
+                          type="button"
+                          onClick={() => openGuidedRecipe(product.id)}
+                          className={`inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-sm ${
+                            recipeProductId === product.id
+                              ? 'border-emerald-300/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                              : 'border-slate-200 bg-white text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200'
+                          }`}
+                        >
+                          <AppIcon icon={ClipboardList} className="h-4 w-4" />
+                          {product.name}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => openGuidedRecipe()}
+                        className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200"
+                      >
+                        <AppIcon icon={ChefHat} className="h-4 w-4" />
+                        Abrir receta activa
+                      </button>
+                    </div>
+                    {recipeProductId ? (
+                      <div className="mt-4 rounded-[20px] border border-emerald-300/25 bg-emerald-500/5 px-4 py-3 text-sm text-slate-700 dark:text-zinc-200">
+                        Producto seleccionado: <strong>{products.find((product) => product.id === recipeProductId)?.name ?? 'Producto'}</strong> • ingredientes cargados:{' '}
+                        <strong>{validRecipeLineCount || recipeData?.ingredients.length || 0}</strong>
+                      </div>
+                    ) : null}
+                  </article>
+
+                  <article className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950 dark:text-white">Paso 4. Preparado interno o subreceta opcional</p>
+                        <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+                          Usa este paso para salsas base, masas o mezclas que primero se producen y luego entran a la receta final.
+                        </p>
+                      </div>
+                      <span className="rounded-2xl border border-current/15 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                        {subRecipeInventoryItems.length ? `${subRecipeInventoryItems.length} preparados` : 'Opcional'}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => prepareInventoryCreation('SUBRECIPE')}
+                        className="inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 dark:text-white"
+                      >
+                        <AppIcon icon={CookingPot} className="h-4 w-4" />
+                        Crear preparado
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openGuidedSubRecipe()}
+                        className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200"
+                      >
+                        <AppIcon icon={ClipboardList} className="h-4 w-4" />
+                        Abrir formula de subreceta
+                      </button>
+                    </div>
+                    {subRecipeItemId ? (
+                      <div className="mt-4 rounded-[20px] border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-sm text-slate-700 dark:text-zinc-200">
+                        Preparado seleccionado: <strong>{inventoryItems.find((item) => item.id === subRecipeItemId)?.name ?? 'Subreceta'}</strong> • componentes cargados:{' '}
+                        <strong>{validSubRecipeLineCount || subRecipeData?.components.length || 0}</strong>
+                      </div>
+                    ) : null}
+                  </article>
+
+                  <article className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950 dark:text-white">Paso 5. Movimiento operativo final</p>
+                        <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+                          Registra la compra, la produccion o el ajuste para que el inventario quede listo antes de vender.
+                        </p>
+                      </div>
+                      <span className="rounded-2xl border border-current/15 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-200">
+                        {branchPurchaseReceipts.length || recentInventoryMovements.length ? 'Con movimientos' : 'Sin movimientos'}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => switchInventoryWorkspace('PURCHASES')}
+                        className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200"
+                      >
+                        <AppIcon icon={Save} className="h-4 w-4" />
+                        Compras y mermas
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => switchInventoryWorkspace('AUDIT')}
+                        className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200"
+                      >
+                        <AppIcon icon={Plus} className="h-4 w-4" />
+                        Ajustes y auditoria
+                      </button>
+                      {subRecipeItemId ? (
+                        <button
+                          type="button"
+                          onClick={() => switchInventoryWorkspace('SUBRECIPES')}
+                          className="inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 dark:text-white"
+                        >
+                          <AppIcon icon={CookingPot} className="h-4 w-4" />
+                          Ir a produccion
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                </div>
+              </Panel>
+            ) : null}
+
+            {activeInventoryWorkspace === 'CATALOG' ? (
+              <Panel title="Cómo usar inventario" subtitle="Guía rápida para entender qué hace cada opción antes de continuar con otro proceso.">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <p className="text-sm font-semibold text-slate-950 dark:text-white">Crear insumo base</p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                      Úsalo para ingredientes comprados directamente: carnes, verduras, lácteos, harinas o bebidas.
+                    </p>
+                  </div>
+                  <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <p className="text-sm font-semibold text-slate-950 dark:text-white">Crear subreceta / preparado</p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                      Úsalo para salsas, masas, fondos o mezclas internas que se producen con otros insumos.
+                    </p>
+                  </div>
+                  <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <p className="text-sm font-semibold text-slate-950 dark:text-white">Botón Editar</p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                      Cambia nombre, unidad, mínimo, costo o proveedor del insumo sin registrar un movimiento de stock.
+                    </p>
+                  </div>
+                  <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45">
+                    <p className="text-sm font-semibold text-slate-950 dark:text-white">Botón Ajustar</p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                      Registra correcciones manuales de inventario con referencia. Para compras reales usa el paso de compras.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-400">
+                  Recomendación de orden: <strong>1)</strong> crea insumos, <strong>2)</strong> define recetas, <strong>3)</strong> registra compras o producción, <strong>4)</strong> revisa movimientos.
+                </div>
+              </Panel>
+            ) : null}
+
+            {activeInventoryWorkspace === 'RECIPES' ? (
+              <Panel title="Receta técnica" subtitle="Vincula ingredientes al platillo y descuenta inventario automáticamente al vender.">
             <div className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
               <label className="space-y-2">
                 <span className="text-sm text-slate-700 dark:text-zinc-300">Sucursal de receta</span>
@@ -1642,9 +1653,11 @@ export default function InventoryPage() {
                 Usa el botón <strong>Receta</strong> en cualquier platillo o producto para abrir su ficha técnica.
               </div>
             )}
-          </Panel>
+              </Panel>
+            ) : null}
 
-          <Panel title="Subrecetas y producción" subtitle="Define salsas base, masas o preparados y prodúcelos consumiendo insumos reales.">
+            {activeInventoryWorkspace === 'SUBRECIPES' ? (
+              <Panel title="Subrecetas y producción" subtitle="Define salsas base, masas o preparados y prodúcelos consumiendo insumos reales.">
             <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-400">
               {subRecipeItemId
                 ? `Subreceta seleccionada: ${inventoryItems.find((item) => item.id === subRecipeItemId)?.name ?? 'Subreceta'}`
@@ -1768,9 +1781,11 @@ export default function InventoryPage() {
                 Marca un insumo como <strong>Subreceta / preparado</strong> y luego usa el botón <strong>Subreceta</strong> para definir su fórmula.
               </div>
             )}
-          </Panel>
+              </Panel>
+            ) : null}
 
-          <Panel title="Compras formales y mermas" subtitle="Registra compras por líneas con costo promedio y mermas operativas separadas del ajuste manual.">
+            {activeInventoryWorkspace === 'PURCHASES' ? (
+              <Panel title="Compras formales y mermas" subtitle="Registra compras por líneas con costo promedio y mermas operativas separadas del ajuste manual.">
             <form className="space-y-4 rounded-[24px] border border-slate-200/80 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.03]" onSubmit={(event) => void handlePurchaseSubmit(event)}>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">
@@ -2017,9 +2032,11 @@ export default function InventoryPage() {
                 </div>
               </div>
             </div>
-          </Panel>
+              </Panel>
+            ) : null}
 
-          <Panel title="Movimientos de inventario" subtitle="Historial reciente para auditar compras, ajustes, mermas y consumo por receta.">
+            {activeInventoryWorkspace === 'AUDIT' ? (
+              <Panel title="Movimientos de inventario" subtitle="Historial reciente para auditar compras, ajustes, mermas y consumo por receta.">
             {adjustmentForm.inventoryItemId ? (
               <form className="mb-5 space-y-4 rounded-[24px] border border-slate-200/80 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.03]" onSubmit={(event) => void handleAdjustmentSubmit(event)}>
                 <div className="grid gap-4 md:grid-cols-2">
@@ -2130,7 +2147,9 @@ export default function InventoryPage() {
                 </div>
               )}
             </div>
-          </Panel>
+              </Panel>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { Panel } from '@/components/Panel';
-import { useEffect, useMemo, useState } from 'react';
 import { getBrandSettings, updateBrandSettings } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
+import { useEffect, useMemo, useState } from 'react';
 
 export default function SettingsPage() {
   const snapshot = useSessionStore((state) => state.snapshot);
@@ -18,11 +18,11 @@ export default function SettingsPage() {
   const currencyOptions = useMemo(
     () => [
       { code: 'GTQ', symbol: 'Q', label: 'Quetzal (GTQ)' },
-      { code: 'USD', symbol: '$', label: 'Dólar (USD)' },
+      { code: 'USD', symbol: '$', label: 'Dolar (USD)' },
       { code: 'PEN', symbol: 'S/', label: 'Sol (PEN)' },
       { code: 'MXN', symbol: '$', label: 'Peso MXN (MXN)' },
-      { code: 'CRC', symbol: '₡', label: 'Colón CRC (CRC)' },
-      { code: 'EUR', symbol: '€', label: 'Euro (EUR)' },
+      { code: 'CRC', symbol: 'CRC', label: 'Colon CRC (CRC)' },
+      { code: 'EUR', symbol: 'EUR', label: 'Euro (EUR)' },
     ],
     [],
   );
@@ -42,7 +42,7 @@ export default function SettingsPage() {
         setLogoData(brand.logoData ?? null);
       })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : 'No fue posible cargar la configuración.');
+        setError(err instanceof Error ? err.message : 'No fue posible cargar la configuracion.');
       })
       .finally(() => {
         setLoading(false);
@@ -66,9 +66,9 @@ export default function SettingsPage() {
         logoData,
       });
       await refreshSnapshot();
-      setSuccess('Configuración guardada.');
+      setSuccess('Configuracion guardada.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible guardar la configuración.');
+      setError(err instanceof Error ? err.message : 'No fue posible guardar la configuracion.');
     } finally {
       setSaving(false);
     }
@@ -78,7 +78,7 @@ export default function SettingsPage() {
     <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
       <Panel title="Restaurante" subtitle="Nombre, moneda y logo">
         {loading ? (
-          <p className="text-sm text-slate-600 dark:text-zinc-400">Cargando configuración...</p>
+          <p className="text-sm text-slate-600 dark:text-zinc-400">Cargando configuracion...</p>
         ) : (
           <div className="space-y-4">
             <label className="block">
@@ -114,7 +114,7 @@ export default function SettingsPage() {
                 </select>
               </label>
               <label className="block">
-                <span className="mb-2 block text-sm text-slate-600 dark:text-zinc-400">Símbolo</span>
+                <span className="mb-2 block text-sm text-slate-600 dark:text-zinc-400">Simbolo</span>
                 <input
                   value={currencySymbol}
                   onChange={(event) => setCurrencySymbol(event.target.value)}
@@ -141,7 +141,7 @@ export default function SettingsPage() {
                     return;
                   }
                   if (file.size > 1_800_000) {
-                    setError('El logo es muy grande. Usa una imagen más liviana.');
+                    setError('El logo es muy grande. Usa una imagen mas liviana.');
                     return;
                   }
                   const reader = new FileReader();
@@ -163,7 +163,7 @@ export default function SettingsPage() {
                     <img src={logoData} alt="Logo" className="h-14 w-14 rounded-2xl object-contain" />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{name || 'Logo cargado'}</p>
-                      <p className="text-xs text-slate-500 dark:text-zinc-500">Se aplica en login y menú lateral</p>
+                      <p className="text-xs text-slate-500 dark:text-zinc-500">Se aplica en login y menu lateral</p>
                     </div>
                   </div>
                   <button
@@ -192,28 +192,14 @@ export default function SettingsPage() {
         )}
       </Panel>
 
-      <Panel title="Sucursales y operación" subtitle="Configuración centralizada multi-sucursal">
-        <div className="space-y-4">
-          {snapshot?.branches.map((branch) => (
-            <article key={branch.id} className="rounded-[22px] border border-slate-200/80 bg-white p-5 shadow-sm dark:border-white/8 dark:bg-zinc-950/45 dark:shadow-none">
-              <p className="font-semibold text-slate-950 dark:text-white">{branch.name}</p>
-              <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">
-                {branch.city} · {branch.address}
-              </p>
-              <p className="mt-3 text-sm text-slate-700 dark:text-zinc-300">{branch.phone}</p>
-            </article>
-          ))}
-        </div>
-      </Panel>
-
-      <Panel title="Capacidades activables" subtitle="Hoja de ruta técnica y comercial">
+      <Panel title="Capacidades activables" subtitle="Hoja de ruta tecnica y comercial">
         <div className="space-y-3 text-sm text-slate-700 dark:text-zinc-300">
           {[
-            'Facturación electrónica por país y proveedor',
-            'WhatsApp para notificaciones y reactivación',
-            'QR público para menú digital por sucursal',
-            'Respaldos automáticos y bitácora de auditoría',
-            'Soporte sin conexión con cola de sincronización',
+            'Facturacion electronica por pais y proveedor',
+            'WhatsApp para notificaciones y reactivacion',
+            'QR publico para menu digital por sucursal',
+            'Respaldos automaticos y bitacora de auditoria',
+            'Soporte sin conexion con cola de sincronizacion',
           ].map((item) => (
             <div key={item} className="rounded-[20px] border border-slate-200 bg-white px-4 py-4 dark:border-white/10 dark:bg-white/[0.03]">
               {item}

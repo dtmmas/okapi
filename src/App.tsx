@@ -14,12 +14,14 @@ import TablesPage from '@/pages/TablesPage';
 import ComandasPage from '@/pages/ComandasPage';
 import CashPage from '@/pages/CashPage';
 import InventoryPage from '@/pages/InventoryPage';
+import MenuPage from '@/pages/MenuPage';
 import CustomersPage from '@/pages/CustomersPage';
 import UsersPage from '@/pages/UsersPage';
 import RolesPage from '@/pages/RolesPage';
 import DeliveryPage from '@/pages/DeliveryPage';
 import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
+import BranchesPage from '@/pages/BranchesPage';
 import { getPostLoginPath } from '@/lib/session-routing';
 
 const pageTitles: Record<string, { title: string; description: string }> = {
@@ -29,13 +31,43 @@ const pageTitles: Record<string, { title: string; description: string }> = {
   '/comandas': { title: 'Comandas', description: 'Cocina, bar y pastelería en una sola vista con estados y cronómetro.' },
   '/usuarios': { title: 'Usuarios', description: 'Roles, estaciones, sucursales y control de acceso centralizado.' },
   '/caja': { title: 'Caja y arqueos', description: 'Cobranza, cierres y trazabilidad del turno actual.' },
+  '/menu': { title: 'Menú y catálogo comercial', description: 'Platillos, bebidas, productos, extras, salsas y aderezos organizados en un módulo separado.' },
   '/inventario': { title: 'Inventario y recetas', description: 'Stock por sucursal, kardex, alertas y abastecimiento.' },
   '/clientes': { title: 'Clientes y fidelización', description: 'Historial, puntos, crédito y activaciones de CRM.' },
   '/delivery': { title: 'Reparto y despacho', description: 'Asignación de repartidores, tiempo estimado y preparación para mapas.' },
   '/reportes': { title: 'Reportes ejecutivos', description: 'Analítica por período, producto, usuario y rentabilidad.' },
   '/roles': { title: 'Roles y permisos', description: 'Define perfiles operativos, orden visual y permisos por categorías.' },
-  '/configuracion': { title: 'Configuración central', description: 'Sucursales, extras comerciales, seguridad y hoja de ruta.' },
+  '/sucursales': { title: 'Sucursales', description: 'Administra sedes, estado operativo y datos de contacto por sucursal.' },
+  '/configuracion': { title: 'Configuración central', description: 'Marca, seguridad y hoja de ruta del sistema.' },
 };
+
+function getMenuPageCopy(search: string) {
+  const params = new URLSearchParams(search);
+  const view = params.get('view') ?? '';
+  const section = params.get('section') ?? 'dishes';
+
+  if (view === 'sections') {
+    return { title: 'Gestión de secciones', description: '' };
+  }
+
+  if (section === 'products') {
+    return { title: 'Productos', description: '' };
+  }
+  if (section === 'extras') {
+    return { title: 'Extras', description: '' };
+  }
+  if (section === 'beverages') {
+    return { title: 'Bebidas', description: '' };
+  }
+  if (section === 'sauces') {
+    return { title: 'Salsas', description: '' };
+  }
+  if (section === 'dressings') {
+    return { title: 'Aderezos', description: '' };
+  }
+
+  return { title: 'Platillos', description: '' };
+}
 
 function ProtectedLayout() {
   const location = useLocation();
@@ -65,7 +97,7 @@ function ProtectedLayout() {
   }
 
   const currentBranch = snapshot.branches.find((branch) => branch.id === user.branchId);
-  const copy = pageTitles[location.pathname] || pageTitles['/dashboard'];
+  const copy = location.pathname === '/menu' ? getMenuPageCopy(location.search) : pageTitles[location.pathname] || pageTitles['/dashboard'];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-[#07070a] dark:text-white">
@@ -84,7 +116,7 @@ function ProtectedLayout() {
             <section className="rounded-[28px] border border-slate-200/80 bg-white/90 px-6 py-5 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
               <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">{currentBranch?.city || 'Operación centralizada'}</p>
               <h2 className="mt-3 font-display text-4xl text-slate-950 dark:text-white">{copy.title}</h2>
-              <p className="mt-2 max-w-3xl text-sm text-slate-600 dark:text-zinc-400">{copy.description}</p>
+              {copy.description ? <p className="mt-2 max-w-3xl text-sm text-slate-600 dark:text-zinc-400">{copy.description}</p> : null}
             </section>
             <Outlet />
           </main>
@@ -234,6 +266,20 @@ function RolesRoute() {
   return <RolesPage />;
 }
 
+function BranchesRoute() {
+  const user = useSessionStore((state) => state.user);
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!user.permissions.includes('SETTINGS_MANAGE')) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <BranchesPage />;
+}
+
 function TablesRoute() {
   const user = useSessionStore((state) => state.user);
 
@@ -289,9 +335,11 @@ export default function App() {
           <Route path="/bar" element={<Navigate to="/comandas" replace />} />
           <Route path="/pasteleria" element={<Navigate to="/comandas" replace />} />
           <Route path="/caja" element={<CashRoute />} />
+          <Route path="/menu" element={<MenuPage />} />
           <Route path="/inventario" element={<InventoryPage />} />
           <Route path="/usuarios" element={<UsersRoute />} />
           <Route path="/roles" element={<RolesRoute />} />
+          <Route path="/sucursales" element={<BranchesRoute />} />
           <Route path="/clientes" element={<CustomersPage />} />
           <Route path="/delivery" element={<DeliveryPage />} />
           <Route path="/reportes" element={<ReportsPage />} />

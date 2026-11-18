@@ -358,6 +358,7 @@ export type RestaurantSnapshot = {
     city: string;
     address: string;
     phone: string;
+    isActive: boolean;
   }>;
   menuCategories: MenuCategory[];
   menuProducts: MenuProduct[];

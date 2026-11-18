@@ -13,16 +13,24 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 function imageUrl(prompt: string) {
-  return `https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=${encodeURIComponent(prompt)}&image_size=landscape_4_3`;
+  void prompt;
+  return null;
 }
 
 async function main() {
   await prisma.payment.deleteMany();
   await prisma.orderItem.deleteMany();
   await prisma.order.deleteMany();
+  await prisma.cashMovementRecord.deleteMany();
   await prisma.cashShift.deleteMany();
+  await prisma.inventoryMovement.deleteMany();
+  await prisma.purchaseReceiptLine.deleteMany();
+  await prisma.purchaseReceipt.deleteMany();
+  await prisma.wasteRecord.deleteMany();
+  await prisma.subRecipeComponent.deleteMany();
   await prisma.recipe.deleteMany();
   await prisma.inventoryItem.deleteMany();
+  await prisma.roleProfile.deleteMany();
   await prisma.product.deleteMany();
   await prisma.category.deleteMany();
   await prisma.customer.deleteMany();
@@ -38,22 +46,20 @@ async function main() {
       currencySymbol: 'Q',
       branches: {
         create: [
-          { name: 'Miraflores', city: 'Lima', address: 'Av. Larco 880', phone: '+51 999 201 111' },
-          { name: 'San Isidro', city: 'Lima', address: 'Calle Conquistadores 145', phone: '+51 999 202 222' },
-          { name: 'Barranco', city: 'Lima', address: 'Jiron Union 223', phone: '+51 999 203 333' },
+          { name: 'Jacaltenango', city: 'Jacaltenango', address: 'Centro de Jacaltenango, Huehuetenango', phone: '+502 5555 0101' },
         ],
       },
     },
     include: { branches: true },
   });
 
-  const [miraflores, sanIsidro, barranco] = tenant.branches;
+  const [jacaltenango] = tenant.branches;
 
   await prisma.user.createMany({
     data: [
       {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         role: RoleCode.ADMIN,
         name: 'Camila Rojas',
         email: 'admin@restaurante.gt',
@@ -61,7 +67,7 @@ async function main() {
       },
       {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         role: RoleCode.SUPERVISOR,
         name: 'Diego Montalvo',
         email: 'supervisor@restaurante.gt',
@@ -69,7 +75,7 @@ async function main() {
       },
       {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         role: RoleCode.CASHIER,
         name: 'Lucia Soto',
         email: 'cajero@restaurante.gt',
@@ -77,7 +83,7 @@ async function main() {
       },
       {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         role: RoleCode.WAITER,
         name: 'Mesero',
         email: 'mesero@restaurante.gt',
@@ -85,7 +91,7 @@ async function main() {
       },
       {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         role: RoleCode.KITCHEN,
         name: 'Cocina',
         email: 'cocina@restaurante.gt',
@@ -93,7 +99,7 @@ async function main() {
       },
       {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         role: RoleCode.BAR,
         name: 'Bar',
         email: 'bar@restaurante.gt',
@@ -101,7 +107,7 @@ async function main() {
       },
       {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         role: RoleCode.PASTRY,
         name: 'Pastelería',
         email: 'pasteleria@restaurante.gt',
@@ -117,7 +123,7 @@ async function main() {
     await prisma.cashShift.create({
       data: {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         openedById: cashierUser.id,
         openingAmount: 500,
       },
@@ -128,7 +134,7 @@ async function main() {
     prisma.category.create({
       data: {
         tenantId: tenant.id,
-        name: 'Comidas',
+        name: 'Platillos',
         color: '#fb7185',
         station: PreparationStation.KITCHEN,
       },
@@ -1670,23 +1676,98 @@ async function main() {
     ],
   });
 
-  const inventoryItem = await prisma.inventoryItem.create({
-    data: {
-      branchId: miraflores.id,
-      name: 'Lomo fino',
-      unit: 'kg',
-      stock: 18,
-      minStock: 12,
-      supplier: 'Carnes del Pacifico',
-    },
+  const sampleInventoryItems = [
+    { name: 'Lomo fino', unit: 'kg', stock: 18, minStock: 12, unitCost: 62, supplier: 'Carnes del Pacifico' },
+    { name: 'Papa amarilla', unit: 'kg', stock: 35, minStock: 14, unitCost: 9, supplier: 'Agro Andino' },
+    { name: 'Cebolla roja', unit: 'kg', stock: 12, minStock: 5, unitCost: 6.5, supplier: 'Huerta Central' },
+    { name: 'Tomate roma', unit: 'kg', stock: 10, minStock: 5, unitCost: 7.2, supplier: 'Huerta Central' },
+    { name: 'Salsa de soya', unit: 'lt', stock: 8, minStock: 3, unitCost: 18, supplier: 'Distribuidora Oriente' },
+    { name: 'Culantro fresco', unit: 'kg', stock: 2.5, minStock: 1, unitCost: 14, supplier: 'Huerta Central' },
+    { name: 'Limon persa', unit: 'kg', stock: 8, minStock: 4, unitCost: 11, supplier: 'Frutas Selectas' },
+    { name: 'Aji amarillo pasta', unit: 'kg', stock: 5, minStock: 2, unitCost: 24, supplier: 'Andes Food Service' },
+    { name: 'Pechuga de pollo', unit: 'kg', stock: 16, minStock: 8, unitCost: 31, supplier: 'Avicola La Granja' },
+    { name: 'Fettuccine', unit: 'kg', stock: 9, minStock: 3, unitCost: 19, supplier: 'Pastas del Chef' },
+    { name: 'Crema fresca', unit: 'lt', stock: 6, minStock: 2, unitCost: 22, supplier: 'Lacteos Sierra' },
+    { name: 'Harina', unit: 'kg', stock: 14, minStock: 5, unitCost: 5.2, supplier: 'Molinos Premium' },
+    { name: 'Queso mozzarella', unit: 'kg', stock: 6, minStock: 2, unitCost: 38, supplier: 'Lacteos Sierra' },
+    { name: 'Queso parmesano', unit: 'kg', stock: 4, minStock: 1.5, unitCost: 52, supplier: 'Lacteos Sierra' },
+    { name: 'Azucar', unit: 'kg', stock: 18, minStock: 6, unitCost: 6.8, supplier: 'Central Mayorista' },
+    { name: 'Queso crema', unit: 'kg', stock: 7, minStock: 3, unitCost: 41, supplier: 'Lacteos Sierra' },
+    { name: 'Galleta vainilla', unit: 'kg', stock: 11, minStock: 4, unitCost: 12, supplier: 'Reposteria Supply' },
+    { name: 'Pulpa de lucuma', unit: 'kg', stock: 5, minStock: 2, unitCost: 28, supplier: 'Frutas Selectas' },
+    { name: 'Maiz morado', unit: 'kg', stock: 8, minStock: 3, unitCost: 13, supplier: 'Andes Food Service' },
+    { name: 'Piña golden', unit: 'kg', stock: 14, minStock: 6, unitCost: 8.5, supplier: 'Frutas Selectas' },
+    { name: 'Canela en raja', unit: 'kg', stock: 1.2, minStock: 0.4, unitCost: 36, supplier: 'Especias del Sol' },
+  ] as const;
+
+  await prisma.inventoryItem.createMany({
+    data: sampleInventoryItems.map((item) => ({
+      branchId: jacaltenango.id,
+      ...item,
+    })),
   });
 
-  await prisma.recipe.create({
-    data: {
-      productId: lomoSaltado.id,
-      inventoryItemId: inventoryItem.id,
-      quantity: 0.25,
+  const inventoryRows = await prisma.inventoryItem.findMany({
+    where: { branchId: jacaltenango.id },
+    select: { id: true, name: true },
+  });
+  const inventoryByName = new Map(inventoryRows.map((item) => [item.name, item.id]));
+
+  const sampleProducts = await prisma.product.findMany({
+    where: {
+      tenantId: tenant.id,
+      sku: {
+        in: ['LOMO-001', 'BEB-001', 'POS-001', 'ENT-001', 'ENT-002', 'PAS-001'],
+      },
     },
+    select: { id: true, sku: true },
+  });
+  const productBySku = new Map(sampleProducts.map((item) => [item.sku ?? '', item.id]));
+
+  const recipeRows = [
+    ['LOMO-001', 'Lomo fino', 0.25],
+    ['LOMO-001', 'Papa amarilla', 0.3],
+    ['LOMO-001', 'Cebolla roja', 0.08],
+    ['LOMO-001', 'Tomate roma', 0.1],
+    ['LOMO-001', 'Salsa de soya', 0.03],
+    ['LOMO-001', 'Culantro fresco', 0.01],
+    ['BEB-001', 'Maiz morado', 0.12],
+    ['BEB-001', 'Piña golden', 0.1],
+    ['BEB-001', 'Canela en raja', 0.005],
+    ['BEB-001', 'Azucar', 0.08],
+    ['POS-001', 'Queso crema', 0.12],
+    ['POS-001', 'Galleta vainilla', 0.08],
+    ['POS-001', 'Pulpa de lucuma', 0.09],
+    ['ENT-001', 'Papa amarilla', 0.25],
+    ['ENT-001', 'Aji amarillo pasta', 0.035],
+    ['ENT-001', 'Limon persa', 0.03],
+    ['ENT-001', 'Culantro fresco', 0.005],
+    ['ENT-002', 'Queso mozzarella', 0.06],
+    ['ENT-002', 'Harina', 0.08],
+    ['PAS-001', 'Pechuga de pollo', 0.18],
+    ['PAS-001', 'Fettuccine', 0.14],
+    ['PAS-001', 'Crema fresca', 0.1],
+    ['PAS-001', 'Queso parmesano', 0.035],
+  ] as const;
+
+  await prisma.recipe.createMany({
+    data: recipeRows
+      .map(([sku, itemName, quantity]) => {
+        const productId = productBySku.get(sku);
+        const inventoryItemId = inventoryByName.get(itemName);
+
+        if (!productId || !inventoryItemId) {
+          return null;
+        }
+
+        return {
+          branchId: jacaltenango.id,
+          productId,
+          inventoryItemId,
+          quantity,
+        };
+      })
+      .filter((item): item is { branchId: number; productId: number; inventoryItemId: number; quantity: number } => item !== null),
   });
 
   const customer = await prisma.customer.create({
@@ -1705,7 +1786,7 @@ async function main() {
     prisma.restaurantTable.create({
       data: {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         code: 'M08',
         area: 'Salon principal',
         capacity: 4,
@@ -1715,7 +1796,7 @@ async function main() {
     prisma.restaurantTable.create({
       data: {
         tenantId: tenant.id,
-        branchId: miraflores.id,
+        branchId: jacaltenango.id,
         code: 'M11',
         area: 'Barra',
         capacity: 2,
@@ -1725,7 +1806,7 @@ async function main() {
     prisma.restaurantTable.create({
       data: {
         tenantId: tenant.id,
-        branchId: barranco.id,
+        branchId: jacaltenango.id,
         code: 'M14',
         area: 'VIP',
         capacity: 8,
@@ -1737,7 +1818,7 @@ async function main() {
   const order = await prisma.order.create({
     data: {
       tenantId: tenant.id,
-      branchId: miraflores.id,
+      branchId: jacaltenango.id,
       tableId: table.id,
       customerId: customer.id,
       createdById: waiterUser?.id ?? cashierUser?.id ?? null,
@@ -1777,7 +1858,7 @@ async function main() {
   await prisma.order.create({
     data: {
       tenantId: tenant.id,
-      branchId: sanIsidro.id,
+      branchId: jacaltenango.id,
       customerId: customer.id,
       createdById: supervisorUser?.id ?? waiterUser?.id ?? cashierUser?.id ?? null,
       code: 'ORD-502',
@@ -1818,7 +1899,7 @@ async function main() {
 
   console.log('Seed completado', {
     tenantId: tenant.id,
-    branchIds: [miraflores.id, sanIsidro.id, barranco.id],
+    branchIds: [jacaltenango.id],
     tableIds: [table.id, tableTwo.id, tableThree.id],
     orderId: order.id,
   });

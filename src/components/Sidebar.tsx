@@ -1,5 +1,6 @@
-import { LayoutDashboard, ShoppingCart, UtensilsCrossed, ChefHat, Wallet, Boxes, Users, Bike, BarChart3, Settings, ShieldCheck, X } from 'lucide-react';
-import { NavLink } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { LayoutDashboard, ShoppingCart, UtensilsCrossed, ChefHat, Wallet, Boxes, Users, Bike, BarChart3, Settings, ShieldCheck, X, ChevronRight, ClipboardList, Store } from 'lucide-react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { AppIcon, type IconComponent } from '@/components/AppIcon';
 import type { PermissionCode } from '@/types/restaurant';
 import { cn } from '@/lib/utils';
@@ -9,15 +10,50 @@ const items: Array<{
   label: string;
   icon: IconComponent;
   permission?: PermissionCode;
+  children?: Array<{
+    to: string;
+    label: string;
+    queryKey?: 'view' | 'section';
+    queryValue?: 'guided' | 'catalog' | 'recipes' | 'subrecipes' | 'purchases' | 'audit' | 'sections' | 'dishes' | 'beverages' | 'products' | 'extras' | 'sauces' | 'dressings';
+  }>;
 }> = [
   { to: '/dashboard', label: 'Panel', icon: LayoutDashboard, permission: 'DASHBOARD_VIEW' },
   { to: '/pos', label: 'Punto de venta', icon: ShoppingCart, permission: 'POS_USE' },
   { to: '/mesas', label: 'Mesas', icon: UtensilsCrossed, permission: 'TABLES_MANAGE' },
   { to: '/comandas', label: 'Comandas', icon: ChefHat, permission: 'KITCHEN_UPDATE' },
   { to: '/caja', label: 'Caja', icon: Wallet, permission: 'CASH_MANAGE' },
-  { to: '/inventario', label: 'Inventario', icon: Boxes, permission: 'INVENTORY_MANAGE' },
+  {
+    to: '/menu',
+    label: 'Menú',
+    icon: ClipboardList,
+    permission: 'INVENTORY_MANAGE',
+    children: [
+      { to: '/menu?view=sections', label: 'Gestión de secciones', queryKey: 'view', queryValue: 'sections' },
+      { to: '/menu?section=dishes', label: 'Platillos', queryKey: 'section', queryValue: 'dishes' },
+      { to: '/menu?section=beverages', label: 'Bebidas', queryKey: 'section', queryValue: 'beverages' },
+      { to: '/menu?section=products', label: 'Productos', queryKey: 'section', queryValue: 'products' },
+      { to: '/menu?section=extras', label: 'Extras', queryKey: 'section', queryValue: 'extras' },
+      { to: '/menu?section=sauces', label: 'Salsas', queryKey: 'section', queryValue: 'sauces' },
+      { to: '/menu?section=dressings', label: 'Aderezos', queryKey: 'section', queryValue: 'dressings' },
+    ],
+  },
+  {
+    to: '/inventario',
+    label: 'Inventario',
+    icon: Boxes,
+    permission: 'INVENTORY_MANAGE',
+    children: [
+      { to: '/inventario?view=guided', label: 'Proceso guiado', queryKey: 'view', queryValue: 'guided' },
+      { to: '/inventario?view=catalog', label: 'Catálogo base', queryKey: 'view', queryValue: 'catalog' },
+      { to: '/inventario?view=recipes', label: 'Recetas técnicas', queryKey: 'view', queryValue: 'recipes' },
+      { to: '/inventario?view=subrecipes', label: 'Subrecetas y producción', queryKey: 'view', queryValue: 'subrecipes' },
+      { to: '/inventario?view=purchases', label: 'Compras y mermas', queryKey: 'view', queryValue: 'purchases' },
+      { to: '/inventario?view=audit', label: 'Ajustes y auditoría', queryKey: 'view', queryValue: 'audit' },
+    ],
+  },
   { to: '/usuarios', label: 'Usuarios', icon: Users, permission: 'SETTINGS_MANAGE' },
   { to: '/roles', label: 'Roles', icon: ShieldCheck, permission: 'SETTINGS_MANAGE' },
+  { to: '/sucursales', label: 'Sucursales', icon: Store, permission: 'SETTINGS_MANAGE' },
   { to: '/clientes', label: 'Clientes', icon: Users, permission: 'CUSTOMERS_MANAGE' },
   { to: '/delivery', label: 'Reparto', icon: Bike, permission: 'DELIVERY_MANAGE' },
   { to: '/reportes', label: 'Reportes', icon: BarChart3, permission: 'REPORTS_VIEW' },
@@ -33,7 +69,29 @@ type SidebarProps = {
 };
 
 export function Sidebar({ permissions, brandName, logoData, mobileOpen = false, onClose }: SidebarProps) {
-  const navItems = items.filter((item) => !item.permission || permissions.includes(item.permission));
+  const location = useLocation();
+  const navItems = useMemo(
+    () => items.filter((item) => !item.permission || permissions.includes(item.permission)),
+    [permissions],
+  );
+  const searchParams = new URLSearchParams(location.search);
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
+
+  function hasActiveChild(
+    item: (typeof items)[number],
+  ) {
+    if (!item.children?.length || location.pathname !== item.to) return false;
+
+    return item.children.some((child) => {
+      if (!child.queryKey) return false;
+      return searchParams.get(child.queryKey) === (child.queryValue ?? '');
+    });
+  }
+
+  useEffect(() => {
+    const activeParent = navItems.find((item) => hasActiveChild(item)) ?? null;
+    setExpandedItem(activeParent?.to ?? null);
+  }, [location.pathname, location.search, navItems]);
 
   return (
     <>
@@ -75,24 +133,79 @@ export function Sidebar({ permissions, brandName, logoData, mobileOpen = false, 
       <nav className="mt-6 space-y-2 pb-4">
         {navItems.map((item) => {
             const Icon = item.icon;
+            const hasChildren = Boolean(item.children?.length);
+            const isExpanded = expandedItem === item.to;
+            const linkActive = !hasChildren && location.pathname === item.to;
 
             return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                onClick={onClose}
-                className={({ isActive }) =>
-                  cn(
-                    'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm transition hover:bg-slate-100 dark:hover:bg-white/6',
-                    isActive
-                      ? 'bg-amber-50 text-slate-950 shadow-sm dark:bg-white/10 dark:text-white dark:shadow-lg'
-                      : 'text-slate-600 dark:text-zinc-400',
-                  )
-                }
-              >
-                <AppIcon icon={Icon} className="h-4 w-4" />
-                {item.label}
-              </NavLink>
+              <div key={item.to} className="space-y-2">
+                {hasChildren ? (
+                  <button
+                    type="button"
+                    onClick={() => setExpandedItem((current) => (current === item.to ? null : item.to))}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm transition hover:bg-slate-100 dark:hover:bg-white/6',
+                      isExpanded
+                        ? 'bg-amber-50 text-slate-950 shadow-sm dark:bg-white/10 dark:text-white dark:shadow-lg'
+                        : 'text-slate-600 dark:text-zinc-400',
+                    )}
+                    aria-expanded={isExpanded}
+                    aria-controls={`sidebar-group-${item.label}`}
+                  >
+                    <AppIcon icon={Icon} className="h-4 w-4" />
+                    <span className="flex-1">{item.label}</span>
+                    <AppIcon icon={ChevronRight} className={cn('h-4 w-4 transition', isExpanded ? 'rotate-90' : '')} />
+                  </button>
+                ) : (
+                  <NavLink
+                    to={item.to}
+                    onClick={onClose}
+                    className={() =>
+                      cn(
+                        'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm transition hover:bg-slate-100 dark:hover:bg-white/6',
+                        linkActive
+                          ? 'bg-amber-50 text-slate-950 shadow-sm dark:bg-white/10 dark:text-white dark:shadow-lg'
+                          : 'text-slate-600 dark:text-zinc-400',
+                      )
+                    }
+                  >
+                    <AppIcon icon={Icon} className="h-4 w-4" />
+                    <span className="flex-1">{item.label}</span>
+                  </NavLink>
+                )}
+
+                {hasChildren ? (
+                  <div
+                    id={`sidebar-group-${item.label}`}
+                    className={cn(
+                      'ml-5 overflow-hidden border-l border-slate-200 pl-4 transition-all duration-200 ease-out dark:border-white/10',
+                      isExpanded ? 'mt-2 max-h-80 opacity-100' : 'max-h-0 opacity-0',
+                    )}
+                  >
+                    <div className="space-y-1 pb-1">
+                    {item.children?.map((child) => {
+                      const childActive =
+                        location.pathname === item.to &&
+                        child.queryKey &&
+                        searchParams.get(child.queryKey) === (child.queryValue ?? '');
+                      return (
+                        <Link
+                          key={child.to}
+                          to={child.to}
+                          onClick={onClose}
+                          className={cn(
+                            'block rounded-2xl px-3 py-2 text-sm transition hover:bg-slate-100 dark:hover:bg-white/6',
+                            childActive ? 'bg-amber-50 font-semibold text-slate-950 dark:bg-white/10 dark:text-white' : 'text-slate-500 dark:text-zinc-400',
+                          )}
+                        >
+                          {child.label}
+                        </Link>
+                      );
+                    })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             );
           })}
       </nav>

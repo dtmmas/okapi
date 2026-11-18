@@ -92,6 +92,7 @@ export type Branch = {
   city: string;
   address: string;
   phone: string;
+  isActive: boolean;
 };
 
 export type AuthUser = {

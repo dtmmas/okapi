@@ -1,9 +1,15 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import multer from 'multer';
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth, requirePermissions, type ApiRequest } from '../lib/auth.js';
+import { buildMenuUploadUrl, menuUploadsDir } from '../lib/uploads.js';
 import {
   adjustInventoryStockForUser,
   createCashMovementForUser,
+  createBranchForUser,
   createCategoryForUser,
   createCustomerForUser,
   createInventoryItemForUser,
@@ -14,6 +20,7 @@ import {
   createOrderForUser,
   createTableForUser,
   deleteCategoryForUser,
+  deleteBranchForUser,
   deleteCustomerForUser,
   deleteProductForUser,
   deleteTableForUser,
@@ -52,6 +59,7 @@ import {
   moveOpenOrderToTable,
   updateStationOrderStatus,
   updateBrandForUser,
+  updateBranchForUser,
   updateRoleProfileForUser,
   updateUser,
   updateUserPassword,
@@ -74,9 +82,62 @@ const permissionCodeValues = [
   'REPORTS_VIEW',
   'SETTINGS_MANAGE',
 ] as const;
+const allowedImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const menuImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      fs.mkdirSync(menuUploadsDir, { recursive: true });
+      callback(null, menuUploadsDir);
+    },
+    filename: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase() || '.jpg';
+      callback(null, `${Date.now()}-${randomUUID()}${extension}`);
+    },
+  }),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, callback) => {
+    if (!allowedImageMimeTypes.has(file.mimetype)) {
+      callback(new Error('Solo se permiten imágenes JPG, PNG, WEBP o GIF.'));
+      return;
+    }
+
+    callback(null, true);
+  },
+});
 
 router.get('/public/brand', async (_req, res) => {
   res.json({ success: true, data: await getPublicBrand() });
+});
+
+router.post('/uploads/menu-image', requireAuth, requirePermissions(['INVENTORY_MANAGE']), (req: ApiRequest, res) => {
+  menuImageUpload.single('image')(req, res, (error: unknown) => {
+    if (error) {
+      const message =
+        error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE'
+          ? 'La imagen excede el límite de 5 MB.'
+          : error instanceof Error
+            ? error.message
+            : 'No fue posible subir la imagen.';
+
+      res.status(400).json({ success: false, message });
+      return;
+    }
+
+    if (!req.file) {
+      res.status(400).json({ success: false, message: 'Debes seleccionar una imagen.' });
+      return;
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        url: buildMenuUploadUrl(req.file.filename),
+        fileName: req.file.filename,
+      },
+    });
+  });
 });
 
 router.get('/bootstrap', requireAuth, async (req: ApiRequest, res) => {
@@ -1067,6 +1128,72 @@ router.get('/branches', requireAuth, async (req: ApiRequest, res) => {
     success: true,
     data: await listBranches(req.authUser),
   });
+});
+
+const branchSchema = z.object({
+  name: z.string().min(2),
+  city: z.string().min(2),
+  address: z.string().min(4),
+  phone: z.string().min(4),
+  isActive: z.boolean().optional(),
+});
+
+router.post('/branches', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const parsed = branchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Datos inválidos.', errors: parsed.error.flatten() });
+  }
+
+  try {
+    const { name, city, address, phone, isActive } = parsed.data;
+    const created = await createBranchForUser(req.authUser, { name, city, address, phone, isActive });
+    return res.status(201).json({ success: true, message: 'Sucursal creada.', data: created });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible crear la sucursal.',
+    });
+  }
+});
+
+router.patch('/branches/:id', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const id = Number(req.params.id);
+  if (!id) {
+    return res.status(400).json({ success: false, message: 'Id inválido.' });
+  }
+
+  const parsed = branchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Datos inválidos.', errors: parsed.error.flatten() });
+  }
+
+  try {
+    const { name, city, address, phone, isActive } = parsed.data;
+    const updated = await updateBranchForUser(req.authUser, { id, name, city, address, phone, isActive });
+    return res.json({ success: true, message: 'Sucursal actualizada.', data: updated });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible actualizar la sucursal.',
+    });
+  }
+});
+
+router.delete('/branches/:id', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const id = Number(req.params.id);
+  if (!id) {
+    return res.status(400).json({ success: false, message: 'Id inválido.' });
+  }
+
+  try {
+    await deleteBranchForUser(req.authUser, id);
+    return res.json({ success: true, message: 'Sucursal eliminada.', data: { success: true } });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible eliminar la sucursal.',
+    });
+  }
 });
 
 router.get('/menu', requireAuth, requirePermissions(['POS_USE']), async (req: ApiRequest, res) => {

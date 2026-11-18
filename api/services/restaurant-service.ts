@@ -12,7 +12,13 @@ import {
   WasteReasonType as PrismaWasteReasonType,
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { findUserByEmail as findMockUserByEmail, restaurantSnapshot, sanitizeUser as sanitizeMockUser, users as mockUsers } from '../data/mock-data.js';
+import {
+  findUserByEmail as findMockUserByEmail,
+  getMockProductRecipe,
+  restaurantSnapshot,
+  sanitizeUser as sanitizeMockUser,
+  users as mockUsers,
+} from '../data/mock-data.js';
 import { defaultRoleProfiles, getDefaultRoleProfile, normalizePermissions, permissionCatalog, roleCodeOrder } from '../lib/permissions.js';
 import { canUseDatabase, prisma } from '../lib/prisma.js';
 import type {
@@ -774,6 +780,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
     city: branch.city,
     address: branch.address,
     phone: branch.phone,
+    isActive: branch.isActive,
   }));
 
   const menuCategories: MenuCategory[] = categoryRows.map((category) => ({
@@ -1448,6 +1455,162 @@ export async function updateUserPassword(
 
 export async function listBranches(user: SanitizedAuthUser) {
   return (await getBootstrapSnapshot(user)).branches;
+}
+
+export async function createBranchForUser(
+  user: SanitizedAuthUser,
+  payload: {
+    name: string;
+    city: string;
+    address: string;
+    phone: string;
+    isActive?: boolean;
+  },
+) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const name = payload.name.trim();
+  const city = payload.city.trim();
+  const address = payload.address.trim();
+  const phone = payload.phone.trim();
+
+  if (!name) {
+    throw new Error('El nombre de la sucursal es obligatorio.');
+  }
+  if (!city) {
+    throw new Error('La ciudad es obligatoria.');
+  }
+  if (!address) {
+    throw new Error('La dirección es obligatoria.');
+  }
+  if (!phone) {
+    throw new Error('El teléfono es obligatorio.');
+  }
+
+  const duplicate = await prisma.branch.findMany({
+    where: { tenantId: user.tenantId },
+    select: { id: true, name: true },
+  });
+
+  if (duplicate.some((branch) => branch.name.trim().toLowerCase() === name.toLowerCase())) {
+    throw new Error('Ya existe una sucursal con ese nombre.');
+  }
+
+  return prisma.branch.create({
+    data: {
+      tenantId: user.tenantId,
+      name,
+      city,
+      address,
+      phone,
+      isActive: payload.isActive ?? true,
+    },
+  });
+}
+
+export async function updateBranchForUser(
+  user: SanitizedAuthUser,
+  payload: {
+    id: number;
+    name: string;
+    city: string;
+    address: string;
+    phone: string;
+    isActive?: boolean;
+  },
+) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const name = payload.name.trim();
+  const city = payload.city.trim();
+  const address = payload.address.trim();
+  const phone = payload.phone.trim();
+
+  if (!name) {
+    throw new Error('El nombre de la sucursal es obligatorio.');
+  }
+  if (!city) {
+    throw new Error('La ciudad es obligatoria.');
+  }
+  if (!address) {
+    throw new Error('La dirección es obligatoria.');
+  }
+  if (!phone) {
+    throw new Error('El teléfono es obligatorio.');
+  }
+
+  const existing = await prisma.branch.findFirst({
+    where: { id: payload.id, tenantId: user.tenantId },
+    select: { id: true },
+  });
+
+  if (!existing) {
+    throw new Error('Sucursal no encontrada.');
+  }
+
+  const duplicate = await prisma.branch.findMany({
+    where: {
+      tenantId: user.tenantId,
+      id: { not: payload.id },
+    },
+    select: { id: true, name: true },
+  });
+
+  if (duplicate.some((branch) => branch.name.trim().toLowerCase() === name.toLowerCase())) {
+    throw new Error('Ya existe otra sucursal con ese nombre.');
+  }
+
+  return prisma.branch.update({
+    where: { id: payload.id },
+    data: {
+      name,
+      city,
+      address,
+      phone,
+      ...(typeof payload.isActive === 'boolean' ? { isActive: payload.isActive } : {}),
+    },
+  });
+}
+
+export async function deleteBranchForUser(user: SanitizedAuthUser, branchId: number) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, tenantId: user.tenantId },
+    select: { id: true, name: true },
+  });
+
+  if (!branch) {
+    throw new Error('Sucursal no encontrada.');
+  }
+
+  if (user.branchId === branchId) {
+    throw new Error('No puedes eliminar la sucursal activa de tu usuario.');
+  }
+
+  const [userCount, tableCount, orderCount, inventoryCount, recipeCount, receiptCount, wasteCount, cashShiftCount] = await Promise.all([
+    prisma.user.count({ where: { tenantId: user.tenantId, branchId } }),
+    prisma.restaurantTable.count({ where: { tenantId: user.tenantId, branchId } }),
+    prisma.order.count({ where: { tenantId: user.tenantId, branchId } }),
+    prisma.inventoryItem.count({ where: { branch: { tenantId: user.tenantId }, branchId } }),
+    prisma.recipe.count({ where: { branch: { tenantId: user.tenantId }, branchId } }),
+    prisma.purchaseReceipt.count({ where: { branch: { tenantId: user.tenantId }, branchId } }),
+    prisma.wasteRecord.count({ where: { branch: { tenantId: user.tenantId }, branchId } }),
+    prisma.cashShift.count({ where: { tenantId: user.tenantId, branchId } }),
+  ]);
+
+  if (userCount + tableCount + orderCount + inventoryCount + recipeCount + receiptCount + wasteCount + cashShiftCount > 0) {
+    throw new Error(`La sucursal ${branch.name} ya tiene operación registrada. Desactívala en lugar de eliminarla.`);
+  }
+
+  await prisma.branch.delete({ where: { id: branchId } });
+  return { success: true as const };
 }
 
 export async function listOrders(user: SanitizedAuthUser, branchId?: number) {
@@ -2587,12 +2750,7 @@ export async function getProductRecipeForUser(
   },
 ) {
   if (!(await canUseDatabase())) {
-    return {
-      productId: payload.productId,
-      branchId: payload.branchId ?? user.branchId,
-      estimatedCost: 0,
-      ingredients: [],
-    } satisfies ProductRecipe;
+    return getMockProductRecipe(payload.productId, payload.branchId ?? user.branchId);
   }
 
   const branchId = payload.branchId ?? user.branchId;

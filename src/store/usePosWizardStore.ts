@@ -5,7 +5,8 @@ type CartLine = {
   productId: number;
   quantity: number;
   notes: string;
-  sauce: string | null;
+  sauces: string[];
+  dressings: string[];
 };
 
 type PosWizardState = {
@@ -19,7 +20,7 @@ type PosWizardState = {
   setCustomerName: (name: string) => void;
   setCustomerPhone: (phone: string) => void;
   clearCustomer: () => void;
-  addToCart: (payload: { productId: number; notes?: string; sauce?: string | null }) => void;
+  addToCart: (payload: { productId: number; notes?: string; sauces?: string[]; dressings?: string[] }) => void;
   incrementLine: (lineId: string) => void;
   decrementLine: (lineId: string) => void;
   removeLine: (lineId: string) => void;
@@ -55,9 +56,14 @@ export const usePosWizardStore = create<PosWizardState>((set) => ({
   addToCart(payload) {
     set((state) => {
       const normalizedNotes = (payload.notes ?? '').trim();
-      const sauce = payload.sauce ?? null;
+      const sauces = [...new Set((payload.sauces ?? []).map((item) => item.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      const dressings = [...new Set((payload.dressings ?? []).map((item) => item.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
       const existing = Object.values(state.cart).find(
-        (line) => line.productId === payload.productId && line.notes === normalizedNotes && line.sauce === sauce,
+        (line) =>
+          line.productId === payload.productId &&
+          line.notes === normalizedNotes &&
+          line.sauces.join('||') === sauces.join('||') &&
+          line.dressings.join('||') === dressings.join('||'),
       );
 
       return {
@@ -78,7 +84,8 @@ export const usePosWizardStore = create<PosWizardState>((set) => ({
                     productId: payload.productId,
                     quantity: 1,
                     notes: normalizedNotes,
-                    sauce,
+                    sauces,
+                    dressings,
                   },
                 };
               })()),

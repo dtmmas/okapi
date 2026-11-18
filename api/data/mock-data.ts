@@ -9,6 +9,7 @@ import type {
   Order,
   PermissionCode,
   ProductPerformance,
+  ProductRecipe,
   ReportSummary,
   RestaurantSnapshot,
   RestaurantTable,
@@ -52,9 +53,7 @@ const rolePermissions: Record<RoleCode, PermissionCode[]> = {
 };
 
 export const branches: Branch[] = [
-  { id: 1, tenantId: 1, name: 'Miraflores', city: 'Lima', address: 'Av. Larco 880', phone: '+51 999 201 111' },
-  { id: 2, tenantId: 1, name: 'San Isidro', city: 'Lima', address: 'Calle Conquistadores 145', phone: '+51 999 202 222' },
-  { id: 3, tenantId: 1, name: 'Barranco', city: 'Lima', address: 'Jiron Union 223', phone: '+51 999 203 333' },
+  { id: 1, tenantId: 1, name: 'Jacaltenango', city: 'Jacaltenango', address: 'Centro de Jacaltenango, Huehuetenango', phone: '+502 5555 0101', isActive: true },
 ];
 
 export const users: AuthUser[] = [
@@ -198,7 +197,7 @@ const activeOrders: Order[] = [
   {
     id: 503,
     code: 'ORD-503',
-    branchId: 2,
+    branchId: 1,
     type: 'TAKE_OUT',
     status: 'OPEN',
     customerName: 'Carlos Vera',
@@ -289,7 +288,7 @@ const pastryOrders: KitchenOrder[] = [
 ];
 
 const menuCategories: RestaurantSnapshot['menuCategories'] = [
-  { id: 1, parentId: null, name: 'Comidas', color: '#fb7185', station: 'KITCHEN' },
+  { id: 1, parentId: null, name: 'Platillos', color: '#fb7185', station: 'KITCHEN' },
   { id: 2, parentId: null, name: 'Bebidas', color: '#38bdf8', station: 'BAR' },
   { id: 3, parentId: null, name: 'Postres', color: '#fbbf24', station: 'PASTRY' },
   { id: 4, parentId: 1, name: 'Platos fuertes', color: '#fb7185', station: 'KITCHEN' },
@@ -300,7 +299,7 @@ const menuCategories: RestaurantSnapshot['menuCategories'] = [
 const menuProducts: RestaurantSnapshot['menuProducts'] = [
   {
     id: 1,
-    categoryId: 1,
+    categoryId: 4,
     name: 'Lomo saltado premium',
     sku: 'LOMO-001',
     imageUrl:
@@ -311,7 +310,7 @@ const menuProducts: RestaurantSnapshot['menuProducts'] = [
   },
   {
     id: 2,
-    categoryId: 2,
+    categoryId: 5,
     name: 'Chicha morada',
     sku: 'BEB-001',
     imageUrl:
@@ -322,7 +321,7 @@ const menuProducts: RestaurantSnapshot['menuProducts'] = [
   },
   {
     id: 3,
-    categoryId: 3,
+    categoryId: 6,
     name: 'Cheesecake lucuma',
     sku: 'POS-001',
     imageUrl:
@@ -331,14 +330,176 @@ const menuProducts: RestaurantSnapshot['menuProducts'] = [
     isPrepared: true,
     station: 'PASTRY',
   },
+  {
+    id: 4,
+    categoryId: 4,
+    name: 'Causa acevichada',
+    sku: 'ENT-001',
+    imageUrl:
+      'https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=realistic%20food%20photography%20of%20Peruvian%20causa%20acevichada%20served%20with%20ceviche%20topping%2C%20yellow%20potato%20layers%2C%20avocado%2C%20microgreens%2C%20restaurant%20lighting%2C%20high%20detail&image_size=landscape_4_3',
+    price: 26,
+    isPrepared: true,
+    station: 'KITCHEN',
+  },
+  {
+    id: 5,
+    categoryId: 4,
+    name: 'Pollo al limon parrillero',
+    sku: 'POL-001',
+    imageUrl:
+      'https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=realistic%20food%20photography%20of%20grilled%20lemon%20chicken%20served%20with%20roasted%20potatoes%20and%20vegetables%2C%20restaurant%20plating%2C%20warm%20lighting%2C%20high%20detail&image_size=landscape_4_3',
+    price: 34,
+    isPrepared: true,
+    station: 'KITCHEN',
+  },
+  {
+    id: 6,
+    categoryId: 4,
+    name: 'Fettuccine Alfredo con pollo',
+    sku: 'PAS-001',
+    imageUrl:
+      'https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=realistic%20food%20photography%20of%20fettuccine%20alfredo%20with%20grilled%20chicken%2C%20parmesan%20cheese%2C%20creamy%20sauce%2C%20restaurant%20plating%2C%20high%20detail&image_size=landscape_4_3',
+    price: 38,
+    isPrepared: true,
+    station: 'KITCHEN',
+  },
+  {
+    id: 7,
+    categoryId: 5,
+    name: 'Limonada con hierbabuena',
+    sku: 'BEB-002',
+    imageUrl:
+      'https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=realistic%20beverage%20photography%20of%20mint%20lemonade%20with%20ice%2C%20fresh%20mint%20leaves%2C%20lemon%20slices%2C%20glass%20condensation%2C%20studio%20lighting%2C%20high%20detail&image_size=landscape_4_3',
+    price: 10,
+    isPrepared: true,
+    station: 'BAR',
+  },
+  {
+    id: 8,
+    categoryId: 6,
+    name: 'Brownie tibio con helado',
+    sku: 'POS-002',
+    imageUrl:
+      'https://coresg-normal.trae.ai/api/ide/v1/text_to_image?prompt=realistic%20dessert%20photography%20of%20warm%20brownie%20with%20vanilla%20ice%20cream%2C%20chocolate%20sauce%2C%20restaurant%20plating%2C%20soft%20lighting%2C%20high%20detail&image_size=landscape_4_3',
+    price: 21,
+    isPrepared: true,
+    station: 'PASTRY',
+  },
 ];
 
 const inventoryItems: InventoryItem[] = [
-  { id: 1, branchId: 1, itemType: 'RAW', name: 'Lomo fino', branch: 'Miraflores', stock: 18, minStock: 12, unit: 'kg', unitCost: 62, stockValue: 1116, supplier: 'Carnes del Pacifico', status: 'OK' },
-  { id: 2, branchId: 1, itemType: 'RAW', name: 'Queso mozzarella', branch: 'Miraflores', stock: 4, minStock: 8, unit: 'kg', unitCost: 38, stockValue: 152, supplier: 'Lacteos Sierra', status: 'LOW' },
-  { id: 3, branchId: 2, itemType: 'RAW', name: 'Papa amarilla', branch: 'San Isidro', stock: 26, minStock: 14, unit: 'kg', unitCost: 9, stockValue: 234, supplier: 'Agro Andino', status: 'OK' },
-  { id: 4, branchId: 3, itemType: 'RAW', name: 'Pisco quebranta', branch: 'Barranco', stock: 6, minStock: 10, unit: 'botellas', unitCost: 85, stockValue: 510, supplier: 'Destileria Sur', status: 'LOW' },
-  { id: 5, branchId: 1, itemType: 'SUBRECIPE', name: 'Salsa BBQ base', branch: 'Miraflores', stock: 3, minStock: 1, unit: 'lt', unitCost: 24, stockValue: 72, supplier: 'Producción interna', status: 'OK' },
+  { id: 1, branchId: 1, itemType: 'RAW', name: 'Lomo fino', branch: 'Jacaltenango', stock: 18, minStock: 12, unit: 'kg', unitCost: 62, stockValue: 1116, supplier: 'Carnes del Pacifico', status: 'OK' },
+  { id: 2, branchId: 1, itemType: 'RAW', name: 'Papa amarilla', branch: 'Jacaltenango', stock: 35, minStock: 14, unit: 'kg', unitCost: 9, stockValue: 315, supplier: 'Agro Andino', status: 'OK' },
+  { id: 3, branchId: 1, itemType: 'RAW', name: 'Cebolla roja', branch: 'Jacaltenango', stock: 12, minStock: 5, unit: 'kg', unitCost: 6.5, stockValue: 78, supplier: 'Huerta Central', status: 'OK' },
+  { id: 4, branchId: 1, itemType: 'RAW', name: 'Tomate roma', branch: 'Jacaltenango', stock: 10, minStock: 5, unit: 'kg', unitCost: 7.2, stockValue: 72, supplier: 'Huerta Central', status: 'OK' },
+  { id: 5, branchId: 1, itemType: 'RAW', name: 'Salsa de soya', branch: 'Jacaltenango', stock: 8, minStock: 3, unit: 'lt', unitCost: 18, stockValue: 144, supplier: 'Distribuidora Oriente', status: 'OK' },
+  { id: 6, branchId: 1, itemType: 'RAW', name: 'Culantro fresco', branch: 'Jacaltenango', stock: 2.5, minStock: 1, unit: 'kg', unitCost: 14, stockValue: 35, supplier: 'Huerta Central', status: 'OK' },
+  { id: 7, branchId: 1, itemType: 'RAW', name: 'Limon persa', branch: 'Jacaltenango', stock: 8, minStock: 4, unit: 'kg', unitCost: 11, stockValue: 88, supplier: 'Frutas Selectas', status: 'OK' },
+  { id: 8, branchId: 1, itemType: 'RAW', name: 'Aji amarillo pasta', branch: 'Jacaltenango', stock: 5, minStock: 2, unit: 'kg', unitCost: 24, stockValue: 120, supplier: 'Andes Food Service', status: 'OK' },
+  { id: 9, branchId: 1, itemType: 'RAW', name: 'Pechuga de pollo', branch: 'Jacaltenango', stock: 16, minStock: 8, unit: 'kg', unitCost: 31, stockValue: 496, supplier: 'Avicola La Granja', status: 'OK' },
+  { id: 10, branchId: 1, itemType: 'RAW', name: 'Fettuccine', branch: 'Jacaltenango', stock: 9, minStock: 3, unit: 'kg', unitCost: 19, stockValue: 171, supplier: 'Pastas del Chef', status: 'OK' },
+  { id: 11, branchId: 1, itemType: 'RAW', name: 'Crema fresca', branch: 'Jacaltenango', stock: 6, minStock: 2, unit: 'lt', unitCost: 22, stockValue: 132, supplier: 'Lacteos Sierra', status: 'OK' },
+  { id: 12, branchId: 1, itemType: 'RAW', name: 'Queso parmesano', branch: 'Jacaltenango', stock: 4, minStock: 1.5, unit: 'kg', unitCost: 52, stockValue: 208, supplier: 'Lacteos Sierra', status: 'OK' },
+  { id: 13, branchId: 1, itemType: 'RAW', name: 'Harina', branch: 'Jacaltenango', stock: 14, minStock: 5, unit: 'kg', unitCost: 5.2, stockValue: 72.8, supplier: 'Molinos Premium', status: 'OK' },
+  { id: 14, branchId: 1, itemType: 'RAW', name: 'Huevo', branch: 'Jacaltenango', stock: 96, minStock: 36, unit: 'unidad', unitCost: 0.45, stockValue: 43.2, supplier: 'Avicola La Granja', status: 'OK' },
+  { id: 15, branchId: 1, itemType: 'RAW', name: 'Azucar', branch: 'Jacaltenango', stock: 18, minStock: 6, unit: 'kg', unitCost: 6.8, stockValue: 122.4, supplier: 'Central Mayorista', status: 'OK' },
+  { id: 16, branchId: 1, itemType: 'RAW', name: 'Queso crema', branch: 'Jacaltenango', stock: 7, minStock: 3, unit: 'kg', unitCost: 41, stockValue: 287, supplier: 'Lacteos Sierra', status: 'OK' },
+  { id: 17, branchId: 1, itemType: 'RAW', name: 'Galleta vainilla', branch: 'Jacaltenango', stock: 11, minStock: 4, unit: 'kg', unitCost: 12, stockValue: 132, supplier: 'Reposteria Supply', status: 'OK' },
+  { id: 18, branchId: 1, itemType: 'RAW', name: 'Pulpa de lucuma', branch: 'Jacaltenango', stock: 5, minStock: 2, unit: 'kg', unitCost: 28, stockValue: 140, supplier: 'Frutas Selectas', status: 'OK' },
+  { id: 19, branchId: 1, itemType: 'RAW', name: 'Maiz morado', branch: 'Jacaltenango', stock: 8, minStock: 3, unit: 'kg', unitCost: 13, stockValue: 104, supplier: 'Andes Food Service', status: 'OK' },
+  { id: 20, branchId: 1, itemType: 'RAW', name: 'Piña golden', branch: 'Jacaltenango', stock: 14, minStock: 6, unit: 'kg', unitCost: 8.5, stockValue: 119, supplier: 'Frutas Selectas', status: 'OK' },
+  { id: 21, branchId: 1, itemType: 'RAW', name: 'Canela en raja', branch: 'Jacaltenango', stock: 1.2, minStock: 0.4, unit: 'kg', unitCost: 36, stockValue: 43.2, supplier: 'Especias del Sol', status: 'OK' },
+  { id: 22, branchId: 1, itemType: 'SUBRECIPE', name: 'Salsa huancaina base', branch: 'Jacaltenango', stock: 4, minStock: 1.5, unit: 'lt', unitCost: 24, stockValue: 96, supplier: 'Produccion interna', status: 'OK' },
+  { id: 23, branchId: 1, itemType: 'RAW', name: 'Papa amarilla', branch: 'Jacaltenango', stock: 26, minStock: 14, unit: 'kg', unitCost: 9.4, stockValue: 244.4, supplier: 'Agro Andino', status: 'OK' },
+  { id: 24, branchId: 1, itemType: 'RAW', name: 'Pisco quebranta', branch: 'Jacaltenango', stock: 6, minStock: 10, unit: 'botellas', unitCost: 85, stockValue: 510, supplier: 'Destileria Sur', status: 'LOW' },
+];
+
+const inventoryItemById = new Map(inventoryItems.map((item) => [item.id, item]));
+
+function buildMockRecipe(
+  productId: number,
+  branchId: number,
+  ingredients: Array<{ inventoryItemId: number; quantity: number }>,
+): ProductRecipe {
+  const recipeIngredients = ingredients.map(({ inventoryItemId, quantity }) => {
+    const item = inventoryItemById.get(inventoryItemId);
+
+    if (!item) {
+      throw new Error(`No existe el insumo demo ${inventoryItemId}.`);
+    }
+
+    return {
+      inventoryItemId,
+      name: item.name,
+      itemType: item.itemType,
+      unit: item.unit,
+      quantity,
+      stock: item.stock,
+      unitCost: item.unitCost,
+    };
+  });
+
+  return {
+    productId,
+    branchId,
+    estimatedCost: Number(
+      recipeIngredients.reduce((sum, item) => sum + item.quantity * item.unitCost, 0).toFixed(4),
+    ),
+    ingredients: recipeIngredients,
+  };
+}
+
+const mockProductRecipes: ProductRecipe[] = [
+  buildMockRecipe(1, 1, [
+    { inventoryItemId: 1, quantity: 0.25 },
+    { inventoryItemId: 2, quantity: 0.3 },
+    { inventoryItemId: 3, quantity: 0.08 },
+    { inventoryItemId: 4, quantity: 0.1 },
+    { inventoryItemId: 5, quantity: 0.03 },
+    { inventoryItemId: 6, quantity: 0.01 },
+  ]),
+  buildMockRecipe(2, 1, [
+    { inventoryItemId: 19, quantity: 0.12 },
+    { inventoryItemId: 20, quantity: 0.1 },
+    { inventoryItemId: 21, quantity: 0.005 },
+    { inventoryItemId: 15, quantity: 0.08 },
+  ]),
+  buildMockRecipe(3, 1, [
+    { inventoryItemId: 16, quantity: 0.12 },
+    { inventoryItemId: 17, quantity: 0.08 },
+    { inventoryItemId: 18, quantity: 0.09 },
+    { inventoryItemId: 14, quantity: 1 },
+    { inventoryItemId: 15, quantity: 0.03 },
+  ]),
+  buildMockRecipe(4, 1, [
+    { inventoryItemId: 2, quantity: 0.25 },
+    { inventoryItemId: 8, quantity: 0.035 },
+    { inventoryItemId: 7, quantity: 0.03 },
+    { inventoryItemId: 22, quantity: 0.04 },
+    { inventoryItemId: 6, quantity: 0.005 },
+  ]),
+  buildMockRecipe(5, 1, [
+    { inventoryItemId: 9, quantity: 0.25 },
+    { inventoryItemId: 7, quantity: 0.04 },
+    { inventoryItemId: 2, quantity: 0.18 },
+    { inventoryItemId: 6, quantity: 0.005 },
+  ]),
+  buildMockRecipe(6, 1, [
+    { inventoryItemId: 9, quantity: 0.18 },
+    { inventoryItemId: 10, quantity: 0.14 },
+    { inventoryItemId: 11, quantity: 0.1 },
+    { inventoryItemId: 12, quantity: 0.035 },
+  ]),
+  buildMockRecipe(7, 1, [
+    { inventoryItemId: 7, quantity: 0.12 },
+    { inventoryItemId: 15, quantity: 0.03 },
+    { inventoryItemId: 6, quantity: 0.003 },
+  ]),
+  buildMockRecipe(8, 1, [
+    { inventoryItemId: 13, quantity: 0.06 },
+    { inventoryItemId: 14, quantity: 1 },
+    { inventoryItemId: 15, quantity: 0.04 },
+  ]),
 ];
 
 const inventoryMovements: InventoryMovement[] = [
@@ -347,7 +508,7 @@ const inventoryMovements: InventoryMovement[] = [
     inventoryItemId: 1,
     itemName: 'Lomo fino',
     branchId: 1,
-    branchName: 'Miraflores',
+    branchName: 'Jacaltenango',
     type: 'PURCHASE',
     quantityChange: 6,
     stockBefore: 12,
@@ -365,7 +526,7 @@ const inventoryMovements: InventoryMovement[] = [
     inventoryItemId: 2,
     itemName: 'Queso mozzarella',
     branchId: 1,
-    branchName: 'Miraflores',
+    branchName: 'Jacaltenango',
     type: 'RECIPE_CONSUMPTION',
     quantityChange: -1.5,
     stockBefore: 5.5,
@@ -384,7 +545,7 @@ const purchaseReceipts: PurchaseReceiptSummary[] = [
   {
     id: 1,
     branchId: 1,
-    branchName: 'Miraflores',
+    branchName: 'Jacaltenango',
     supplier: 'Carnes del Pacifico',
     reference: 'COMP-2401',
     invoiceNo: 'A-102',
@@ -398,7 +559,7 @@ const wasteRecords: WasteRecordSummary[] = [
   {
     id: 1,
     branchId: 1,
-    branchName: 'Miraflores',
+    branchName: 'Jacaltenango',
     inventoryItemId: 2,
     itemName: 'Queso mozzarella',
     quantity: 0.25,
@@ -416,9 +577,9 @@ const customers: Customer[] = [
 ];
 
 const deliveryOrders: DeliveryOrder[] = [
-  { id: 1, code: 'DLV-9001', customerName: 'Andrea Paredes', district: 'Miraflores', eta: '14 min', driver: 'Miguel Solis', status: 'ON_ROUTE', total: 96 },
+  { id: 1, code: 'DLV-9001', customerName: 'Andrea Paredes', district: 'Jacaltenango', eta: '14 min', driver: 'Miguel Solis', status: 'ON_ROUTE', total: 96 },
   { id: 2, code: 'DLV-9002', customerName: 'Paola Valencia', district: 'San Borja', eta: 'Pendiente', driver: 'Sin asignar', status: 'PENDING', total: 74 },
-  { id: 3, code: 'DLV-9003', customerName: 'Jose Ponce', district: 'Barranco', eta: '6 min', driver: 'Kevin Rivas', status: 'ASSIGNED', total: 132 },
+  { id: 3, code: 'DLV-9003', customerName: 'Jose Ponce', district: 'Jacaltenango', eta: '6 min', driver: 'Kevin Rivas', status: 'ASSIGNED', total: 132 },
 ];
 
 const cashMovements: CashMovement[] = [
@@ -433,7 +594,7 @@ const reportSummary: ReportSummary = {
   sales: 438200,
   profit: 132640,
   averageTicket: 81,
-  bestBranch: 'Miraflores',
+  bestBranch: 'Jacaltenango',
   bestSeller: 'Lomo saltado premium',
 };
 
@@ -487,4 +648,22 @@ export function sanitizeUser(user: AuthUser) {
 
 export function findUserByEmail(email: string) {
   return users.find((user) => user.email.toLowerCase() === email.toLowerCase());
+}
+
+export function getMockProductRecipe(productId: number, branchId: number) {
+  const recipe = mockProductRecipes.find((item) => item.productId === productId) ?? null;
+
+  if (!recipe) {
+    return {
+      productId,
+      branchId,
+      estimatedCost: 0,
+      ingredients: [],
+    } satisfies ProductRecipe;
+  }
+
+  return {
+    ...recipe,
+    branchId,
+  } satisfies ProductRecipe;
 }
