@@ -210,6 +210,7 @@ export function payOrder(payload: {
   receivedAmount?: number | null;
   reference?: string | null;
   proofImage?: string | null;
+  appliedItemIds?: number[] | null;
 }) {
   return apiRequest<{ success: true; completed: boolean; paidAmount: number; remainingAmount: number; registeredAmount: number }>(
     `/api/v1/orders/${payload.orderId}/pay`,
@@ -221,6 +222,7 @@ export function payOrder(payload: {
       receivedAmount: payload.receivedAmount ?? null,
       reference: payload.reference ?? null,
       proofImage: payload.proofImage ?? null,
+      appliedItemIds: payload.appliedItemIds ?? null,
       }),
     },
   );
@@ -247,6 +249,12 @@ export function createOrUpdateOrder(payload: {
   });
 }
 
+export function requestOrderBill(orderId: number) {
+  return apiRequest<{ success: true; billRequestedAt: string }>(`/api/v1/orders/${orderId}/request-bill`, {
+    method: 'POST',
+  });
+}
+
 export function moveTableAccount(payload: { fromTableId: number; toTableId: number }) {
   return apiRequest('/api/v1/tables/move', {
     method: 'POST',
@@ -259,6 +267,30 @@ export function updateTableStatus(payload: { tableId: number; status: 'FREE' | '
     method: 'PUT',
     body: JSON.stringify({ status: payload.status }),
   });
+}
+
+export function updateTableReservation(payload: { tableId: number; status: 'FREE' | 'RESERVED' }) {
+  return apiRequest<{ success: true }>(`/api/v1/tables/${payload.tableId}/reservation`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: payload.status }),
+  });
+}
+
+export function releaseTableReservationKeepalive(tableId: number) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (!token || !Number.isInteger(tableId) || tableId <= 0) {
+    return;
+  }
+
+  void fetch(`/api/v1/tables/${tableId}/reservation`, {
+    method: 'PUT',
+    keepalive: true,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ status: 'FREE' }),
+  }).catch(() => undefined);
 }
 
 export function createTable(payload: {
@@ -300,6 +332,17 @@ export function updateStationStatus(payload: {
   status: 'PENDING' | 'IN_PREPARATION' | 'READY' | 'DELIVERED';
 }) {
   return apiRequest(`/api/v1/stations/${payload.station}/orders/${payload.orderId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: payload.status }),
+  });
+}
+
+export function updateStationItemStatus(payload: {
+  station: 'KITCHEN' | 'BAR' | 'PASTRY';
+  orderItemId: number;
+  status: 'PENDING' | 'IN_PREPARATION' | 'READY' | 'DELIVERED';
+}) {
+  return apiRequest(`/api/v1/stations/${payload.station}/items/${payload.orderItemId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status: payload.status }),
   });
@@ -372,6 +415,7 @@ export function createCategory(payload: {
   parentId?: number | null;
   name: string;
   color?: string | null;
+  showInPos?: boolean | null;
   station: 'KITCHEN' | 'BAR' | 'PASTRY';
 }) {
   return apiRequest('/api/v1/menu/categories', {
@@ -386,6 +430,7 @@ export function updateCategory(
     parentId?: number | null;
     name: string;
     color?: string | null;
+    showInPos?: boolean | null;
     station: 'KITCHEN' | 'BAR' | 'PASTRY';
   },
 ) {

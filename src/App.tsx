@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
+import { buildMenuSectionRoots, findMenuSectionRootByQueryValue } from '@/lib/menu-sections';
 import { useSessionStore } from '@/store/useSessionStore';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 import PosTablesPage from '@/pages/pos/PosTablesPage';
 import PosCustomerPage from '@/pages/pos/PosCustomerPage';
 import PosMenuPage from '@/pages/pos/PosMenuPage';
+import KioskPage from '@/pages/kiosk/KioskPage';
 import CashierTablesPage from '@/pages/cashier/CashierTablesPage';
 import CashierCheckoutPage from '@/pages/cashier/CashierCheckoutPage';
 import TablesPage from '@/pages/TablesPage';
@@ -23,6 +25,7 @@ import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
 import BranchesPage from '@/pages/BranchesPage';
 import { getPostLoginPath } from '@/lib/session-routing';
+import type { MenuCategory } from '@/types/restaurant';
 
 const pageTitles: Record<string, { title: string; description: string }> = {
   '/dashboard': { title: 'Panel principal operativo', description: 'Ventas, órdenes activas, combinación de productos y salud de la operación.' },
@@ -30,7 +33,8 @@ const pageTitles: Record<string, { title: string; description: string }> = {
   '/mesas': { title: 'Gestión de mesas', description: 'Plano visual del restaurante con unión y traslado de pedidos.' },
   '/comandas': { title: 'Comandas', description: 'Cocina, bar y pastelería en una sola vista con estados y cronómetro.' },
   '/usuarios': { title: 'Usuarios', description: 'Roles, estaciones, sucursales y control de acceso centralizado.' },
-  '/caja': { title: 'Caja y arqueos', description: 'Cobranza, cierres y trazabilidad del turno actual.' },
+  '/caja/detalle': { title: 'Detalle de caja', description: 'Caja, arqueo, apertura, cierre y control administrativo del turno actual.' },
+  '/caja/movimientos': { title: 'Movimientos', description: 'Ventas agrupadas por cuenta, abonos, auditoria y reimpresiones.' },
   '/menu': { title: 'Menú y catálogo comercial', description: 'Platillos, bebidas, productos, extras, salsas y aderezos organizados en un módulo separado.' },
   '/inventario': { title: 'Inventario y recetas', description: 'Stock por sucursal, kardex, alertas y abastecimiento.' },
   '/clientes': { title: 'Clientes y fidelización', description: 'Historial, puntos, crédito y activaciones de CRM.' },
@@ -41,32 +45,20 @@ const pageTitles: Record<string, { title: string; description: string }> = {
   '/configuracion': { title: 'Configuración central', description: 'Marca, seguridad y hoja de ruta del sistema.' },
 };
 
-function getMenuPageCopy(search: string) {
+function getMenuPageCopy(search: string, sectionNames: MenuCategory[]) {
   const params = new URLSearchParams(search);
   const view = params.get('view') ?? '';
-  const section = params.get('section') ?? 'dishes';
+  const section = findMenuSectionRootByQueryValue(params.get('sectionId') ?? params.get('section'), sectionNames);
 
   if (view === 'sections') {
     return { title: 'Gestión de secciones', description: '' };
   }
 
-  if (section === 'products') {
-    return { title: 'Productos', description: '' };
-  }
-  if (section === 'extras') {
-    return { title: 'Extras', description: '' };
-  }
-  if (section === 'beverages') {
-    return { title: 'Bebidas', description: '' };
-  }
-  if (section === 'sauces') {
-    return { title: 'Salsas', description: '' };
-  }
-  if (section === 'dressings') {
-    return { title: 'Aderezos', description: '' };
+  if (section) {
+    return { title: section.name, description: '' };
   }
 
-  return { title: 'Platillos', description: '' };
+  return { title: 'Menú', description: '' };
 }
 
 function ProtectedLayout() {
@@ -97,7 +89,8 @@ function ProtectedLayout() {
   }
 
   const currentBranch = snapshot.branches.find((branch) => branch.id === user.branchId);
-  const copy = location.pathname === '/menu' ? getMenuPageCopy(location.search) : pageTitles[location.pathname] || pageTitles['/dashboard'];
+  const menuSectionRoots = buildMenuSectionRoots(snapshot.menuCategories);
+  const copy = location.pathname === '/menu' ? getMenuPageCopy(location.search, menuSectionRoots) : pageTitles[location.pathname] || pageTitles['/dashboard'];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-[#07070a] dark:text-white">
@@ -107,6 +100,7 @@ function ProtectedLayout() {
           permissions={user.permissions}
           brandName={snapshot.brand.name}
           logoData={snapshot.brand.logoData ?? null}
+          menuCategories={snapshot.menuCategories}
           mobileOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
@@ -162,7 +156,7 @@ function FullscreenLayout() {
     );
   }
 
-  if (location.pathname.startsWith('/pos') && user.role === 'WAITER' && !snapshot.cashShift?.isOpen) {
+  if ((location.pathname.startsWith('/pos') || location.pathname.startsWith('/kiosk')) && user.role === 'WAITER' && !snapshot.cashShift?.isOpen) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-slate-900 dark:bg-[#07070a] dark:text-white">
         <div className="w-full max-w-xl rounded-[28px] border border-slate-200/80 bg-white/90 p-8 text-center shadow-[0_24px_80px_rgba(15,23,42,0.12)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.03] dark:shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
@@ -193,7 +187,7 @@ function FullscreenLayout() {
     );
   }
 
-  if (location.pathname.startsWith('/pos') && !user.permissions.includes('POS_USE')) {
+  if ((location.pathname.startsWith('/pos') || location.pathname.startsWith('/kiosk')) && !user.permissions.includes('POS_USE')) {
     return <Navigate to={getPostLoginPath(user)} replace />;
   }
 
@@ -309,7 +303,21 @@ function CashRoute() {
     return <Navigate to="/dashboard" replace />;
   }
 
-  return <CashPage />;
+  return <CashPage view="overview" />;
+}
+
+function CashMovementsRoute() {
+  const user = useSessionStore((state) => state.user);
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!user.permissions.includes('CASH_MANAGE')) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <CashPage view="movements" />;
 }
 
 export default function App() {
@@ -322,6 +330,7 @@ export default function App() {
           <Route path="/pos/mesas" element={<PosTablesPage />} />
           <Route path="/pos/cliente" element={<PosCustomerPage />} />
           <Route path="/pos/menu" element={<PosMenuPage />} />
+          <Route path="/kiosk" element={<KioskPage />} />
           <Route path="/cashier/mesas" element={<CashierTablesPage />} />
           <Route path="/cashier/cobrar/:tableId" element={<CashierCheckoutPage />} />
           <Route path="/kds" element={<KdsRoute />} />
@@ -334,7 +343,9 @@ export default function App() {
           <Route path="/cocina" element={<Navigate to="/comandas" replace />} />
           <Route path="/bar" element={<Navigate to="/comandas" replace />} />
           <Route path="/pasteleria" element={<Navigate to="/comandas" replace />} />
-          <Route path="/caja" element={<CashRoute />} />
+          <Route path="/caja" element={<Navigate to="/caja/detalle" replace />} />
+          <Route path="/caja/detalle" element={<CashRoute />} />
+          <Route path="/caja/movimientos" element={<CashMovementsRoute />} />
           <Route path="/menu" element={<MenuPage />} />
           <Route path="/inventario" element={<InventoryPage />} />
           <Route path="/usuarios" element={<UsersRoute />} />

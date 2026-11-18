@@ -21,6 +21,7 @@ type PosWizardState = {
   setCustomerPhone: (phone: string) => void;
   clearCustomer: () => void;
   addToCart: (payload: { productId: number; notes?: string; sauces?: string[]; dressings?: string[] }) => void;
+  updateLine: (lineId: string, payload: { productId: number; notes?: string; sauces?: string[]; dressings?: string[] }) => void;
   incrementLine: (lineId: string) => void;
   decrementLine: (lineId: string) => void;
   removeLine: (lineId: string) => void;
@@ -89,6 +90,49 @@ export const usePosWizardStore = create<PosWizardState>((set) => ({
                   },
                 };
               })()),
+        },
+      };
+    });
+  },
+  updateLine(lineId, payload) {
+    set((state) => {
+      const existingLine = state.cart[lineId];
+      if (!existingLine) {
+        return {};
+      }
+
+      const normalizedNotes = (payload.notes ?? '').trim();
+      const sauces = [...new Set((payload.sauces ?? []).map((item) => item.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      const dressings = [...new Set((payload.dressings ?? []).map((item) => item.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      const matchingLine = Object.values(state.cart).find(
+        (line) =>
+          line.id !== lineId &&
+          line.productId === payload.productId &&
+          line.notes === normalizedNotes &&
+          line.sauces.join('||') === sauces.join('||') &&
+          line.dressings.join('||') === dressings.join('||'),
+      );
+
+      if (matchingLine) {
+        const next = { ...state.cart };
+        next[matchingLine.id] = {
+          ...matchingLine,
+          quantity: matchingLine.quantity + existingLine.quantity,
+        };
+        delete next[lineId];
+        return { cart: next };
+      }
+
+      return {
+        cart: {
+          ...state.cart,
+          [lineId]: {
+            ...existingLine,
+            productId: payload.productId,
+            notes: normalizedNotes,
+            sauces,
+            dressings,
+          },
         },
       };
     });

@@ -18,6 +18,7 @@ export default function PosTablesPage() {
   const setCustomer = usePosWizardStore((state) => state.setCustomer);
   const clearCart = usePosWizardStore((state) => state.clearCart);
   const [activeArea, setActiveArea] = useState<string>('');
+  const [selectionError, setSelectionError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSnapshot();
@@ -58,7 +59,17 @@ export default function PosTablesPage() {
 
   function handleSelect(tableId: number) {
     const table = tables.find((item) => item.id === tableId);
+    if (!table) {
+      return;
+    }
+
+    if (table.status === 'RESERVED') {
+      setSelectionError(`La mesa ${table.code} está siendo usada en el kiosko. Espera a que el cliente termine o elige otra mesa.`);
+      return;
+    }
+
     const order = table ? activeOrders.find((item) => item.tableCode === table.code) : null;
+    setSelectionError(null);
 
     clearCart();
     setTable(tableId);
@@ -136,17 +147,31 @@ export default function PosTablesPage() {
           </div>
         ) : null}
 
+        {selectionError ? (
+          <div className="mb-5 rounded-[24px] border border-rose-300/30 bg-rose-500/10 px-5 py-4 text-sm font-medium text-rose-800 dark:text-rose-200">
+            {selectionError}
+          </div>
+        ) : null}
+
         {visibleTables.length ? (
           <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
           {visibleTables.map((table) => {
             const order = activeOrders.find((item) => item.tableCode === table.code);
+            const isReadyToCharge = Boolean(order?.readyForPayment);
+            const isReservedForKiosk = table.status === 'RESERVED';
 
             return (
               <button
                 key={table.id}
                 type="button"
                 onClick={() => handleSelect(table.id)}
-                className="group flex min-h-[150px] flex-col justify-between rounded-[28px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-amber-300/25 hover:bg-amber-50 dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none dark:hover:bg-white/[0.05] sm:min-h-[170px] sm:p-5 lg:min-h-[200px] lg:p-6 2xl:min-h-[230px]"
+                className={`group flex min-h-[150px] flex-col justify-between rounded-[28px] border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 dark:bg-white/[0.03] dark:shadow-none dark:hover:bg-white/[0.05] sm:min-h-[170px] sm:p-5 lg:min-h-[200px] lg:p-6 2xl:min-h-[230px] ${
+                  isReadyToCharge
+                    ? 'border-violet-300/40 ring-2 ring-violet-300/15 dark:border-violet-400/30 dark:ring-violet-400/10'
+                    : isReservedForKiosk
+                      ? 'border-sky-300/40 bg-sky-50/80 dark:border-sky-400/30 dark:bg-sky-500/5'
+                    : 'border-slate-200 hover:border-amber-300/25 dark:border-white/10'
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
@@ -158,7 +183,10 @@ export default function PosTablesPage() {
                       <p className="text-xs text-slate-500 dark:text-zinc-500 sm:text-sm lg:text-base">{table.area}</p>
                     </div>
                   </div>
-                  <StatusBadge value={table.status} />
+                  <div className="flex flex-col items-end gap-2">
+                    {isReadyToCharge ? <StatusBadge value="BILL_REQUESTED" /> : null}
+                    <StatusBadge value={table.status} />
+                  </div>
                 </div>
 
                 <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700 dark:border-white/8 dark:bg-black/20 dark:text-zinc-200 sm:mt-6 sm:text-sm lg:text-base">
@@ -166,6 +194,16 @@ export default function PosTablesPage() {
                     <span className="text-slate-500 dark:text-zinc-400">Cuenta</span>
                     <span className="font-semibold text-slate-950 dark:text-white">{order?.code ?? 'Sin cuenta'}</span>
                   </p>
+                  {isReservedForKiosk ? (
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-700 dark:text-sky-300">
+                      Reservada por kiosko
+                    </p>
+                  ) : null}
+                  {isReadyToCharge ? (
+                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-violet-700 dark:text-violet-300">
+                      Lista para cobrar
+                    </p>
+                  ) : null}
                 </div>
               </button>
             );

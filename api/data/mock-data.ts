@@ -169,8 +169,8 @@ const activeOrders: Order[] = [
     pendingAmount: 182,
     paymentCount: 0,
     items: [
-      { product: 'Lomo saltado premium', quantity: 2, notes: '1 sin cebolla' },
-      { product: 'Chicha morada', quantity: 2 },
+      { id: 1, product: 'Lomo saltado premium', quantity: 2, notes: '1 sin cebolla' },
+      { id: 2, product: 'Chicha morada', quantity: 2 },
     ],
     payments: [],
   },
@@ -189,8 +189,8 @@ const activeOrders: Order[] = [
     pendingAmount: 96,
     paymentCount: 0,
     items: [
-      { product: 'Arroz con mariscos', quantity: 1 },
-      { product: 'Inka Kola 1.5L', quantity: 1 },
+      { id: 3, product: 'Arroz con mariscos', quantity: 1 },
+      { id: 4, product: 'Inka Kola 1.5L', quantity: 1 },
     ],
     payments: [],
   },
@@ -208,7 +208,7 @@ const activeOrders: Order[] = [
     pendingAmount: 58,
     paymentCount: 0,
     items: [
-      { product: 'Hamburguesa parrillera', quantity: 2, modifier: 'extra queso' },
+      { id: 5, product: 'Hamburguesa parrillera', quantity: 2, modifier: 'extra queso' },
     ],
     payments: [],
   },
@@ -235,7 +235,10 @@ const kitchenOrders: KitchenOrder[] = [
     startedAt: new Date(Date.now() - 9 * 60000).toISOString(),
     elapsedMinutes: 9,
     priority: 'ALTA',
-    items: ['Lomo saltado premium x2', 'Papas nativas'],
+    items: [
+      { id: 101, product: 'Lomo saltado premium', quantity: 2, status: 'IN_PREPARATION' },
+      { id: 102, product: 'Papas nativas', quantity: 1, status: 'IN_PREPARATION' },
+    ],
   },
   {
     id: 3,
@@ -249,7 +252,7 @@ const kitchenOrders: KitchenOrder[] = [
     startedAt: new Date(Date.now() - 2 * 60000).toISOString(),
     elapsedMinutes: 2,
     priority: 'BAJA',
-    items: ['Causa acevichada x1'],
+    items: [{ id: 103, product: 'Causa acevichada', quantity: 1, status: 'PENDING' }],
   },
 ];
 
@@ -266,7 +269,7 @@ const barOrders: KitchenOrder[] = [
     startedAt: new Date(Date.now() - 4 * 60000).toISOString(),
     elapsedMinutes: 4,
     priority: 'MEDIA',
-    items: ['Pisco sour autor x2'],
+    items: [{ id: 201, product: 'Pisco sour autor', quantity: 2, status: 'READY' }],
   },
 ];
 
@@ -283,7 +286,7 @@ const pastryOrders: KitchenOrder[] = [
     startedAt: new Date(Date.now() - 6 * 60000).toISOString(),
     elapsedMinutes: 6,
     priority: 'MEDIA',
-    items: ['Cheesecake lucuma x1'],
+    items: [{ id: 301, product: 'Cheesecake lucuma', quantity: 1, status: 'PENDING' }],
   },
 ];
 

@@ -54,6 +54,7 @@ export type MenuCategory = {
   parentId?: number | null;
   name: string;
   color?: string;
+  showInPos?: boolean | null;
   station: PreparationStation;
 };
 
@@ -199,10 +200,12 @@ export type RestaurantTable = {
 };
 
 export type OrderItem = {
+  id: number;
   product: string;
   quantity: number;
   modifier?: string;
   notes?: string;
+  paid?: boolean;
 };
 
 export type OrderPayment = {
@@ -210,6 +213,7 @@ export type OrderPayment = {
   method: PaymentMethod;
   amount: number;
   reference?: string | null;
+  appliedItemIds?: number[];
   createdAt: string;
 };
 
@@ -219,6 +223,8 @@ export type Order = {
   branchId: number;
   type: OrderType;
   status: OrderStatus;
+  billRequestedAt?: string | null;
+  readyForPayment?: boolean;
   customerName: string;
   area: string;
   total: number;
@@ -244,7 +250,13 @@ export type KitchenOrder = {
   startedAt: string;
   elapsedMinutes: number;
   priority: 'ALTA' | 'MEDIA' | 'BAJA';
-  items: string[];
+  items: Array<{
+    id: number;
+    product: string;
+    quantity: number;
+    notes?: string;
+    status: KitchenStatus;
+  }>;
 };
 
 export type InventoryItem = {
@@ -359,6 +371,25 @@ export type CashMovement = {
   amount: number;
   method: PaymentMethod;
   createdAt: string;
+  orderCode?: string;
+  customerName?: string;
+  tableCode?: string;
+  paymentReference?: string | null;
+  orderTotal?: number;
+  orderPaidAmount?: number;
+  orderPendingAmount?: number;
+  orderItems?: Array<{
+    quantity: number;
+    product: string;
+    notes?: string;
+    lineTotal?: number | null;
+  }>;
+  orderPayments?: Array<{
+    method: PaymentMethod;
+    amount: number;
+    reference?: string | null;
+    createdAt: string;
+  }>;
 };
 
 export type CashShiftSummary = {

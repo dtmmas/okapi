@@ -81,6 +81,23 @@ function parseCustomPermissions(value: unknown): AuthUser['permissions'] {
   return normalizePermissions(value.filter((item): item is AuthUser['permissions'][number] => typeof item === 'string'));
 }
 
+function parseAppliedItemIds(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return [] as number[];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [] as number[];
+    }
+
+    return parsed.filter((item): item is number => typeof item === 'number' && Number.isInteger(item) && item > 0);
+  } catch {
+    return [] as number[];
+  }
+}
+
 const permissionCatalogItems = [...permissionCatalog];
 const mockRoleProfilesStore = new Map<number, RoleProfileSummary[]>();
 
@@ -535,7 +552,7 @@ function buildDashboardMetrics(orders: Order[], branches: Branch[], currencySymb
   });
 
   const totalSales = todayOrders.reduce((sum, order) => sum + order.total, 0);
-  const activeOrders = orders.filter((order) => ['OPEN', 'IN_PREPARATION', 'READY', 'SERVED'].includes(order.status));
+  const activeOrders = orders.filter((order) => ['OPEN', 'IN_PREPARATION', 'READY', 'SERVED'].includes(order.status) && order.pendingAmount > 0);
   const averageTicket = orders.length ? orders.reduce((sum, order) => sum + order.total, 0) / orders.length : 0;
 
   return [
@@ -584,13 +601,117 @@ function toKitchenStatus(status: PrismaPreparationStatus): KitchenOrder['status'
   return 'PENDING';
 }
 
-function deriveTicketStatus(statuses: Array<KitchenOrder['status']>): KitchenOrder['status'] {
-  if (statuses.includes('PENDING')) {
-    return 'PENDING';
+function toPreparationStatus(status: KitchenOrder['status']) {
+  if (status === 'DELIVERED') {
+    return 'DELIVERED' as unknown as PrismaPreparationStatus;
   }
 
+  if (status === 'READY') {
+    return PrismaPreparationStatus.READY;
+  }
+
+  if (status === 'IN_PREPARATION') {
+    return PrismaPreparationStatus.IN_PREPARATION;
+  }
+
+  return PrismaPreparationStatus.PENDING;
+}
+
+function getTransitionSourceStatuses(status: KitchenOrder['status']): PrismaPreparationStatus[] {
+  if (status === 'IN_PREPARATION') {
+    return [PrismaPreparationStatus.PENDING];
+  }
+
+  if (status === 'READY') {
+    return [PrismaPreparationStatus.IN_PREPARATION];
+  }
+
+  if (status === 'DELIVERED') {
+    return [PrismaPreparationStatus.READY];
+  }
+
+  return [PrismaPreparationStatus.PENDING, PrismaPreparationStatus.IN_PREPARATION, PrismaPreparationStatus.READY];
+}
+
+async function syncOrderLifecycleStatus(tx: Prisma.TransactionClient, orderId: number, currentOrderStatus: PrismaOrderStatus) {
+  const pendingCount = await tx.orderItem.count({
+    where: {
+      orderId,
+      status: { in: [PrismaPreparationStatus.PENDING, PrismaPreparationStatus.IN_PREPARATION] },
+    },
+  });
+
+  const activeCount = await tx.orderItem.count({
+    where: {
+      orderId,
+      status: { in: [PrismaPreparationStatus.PENDING, PrismaPreparationStatus.IN_PREPARATION, PrismaPreparationStatus.READY] },
+    },
+  });
+
+  const nextOrderStatus =
+    activeCount === 0 ? PrismaOrderStatus.SERVED : pendingCount === 0 ? PrismaOrderStatus.READY : PrismaOrderStatus.IN_PREPARATION;
+
+  if (currentOrderStatus !== PrismaOrderStatus.PAID && currentOrderStatus !== PrismaOrderStatus.CANCELLED) {
+    await tx.order.update({
+      where: { id: orderId },
+      data: nextOrderStatus === PrismaOrderStatus.SERVED ? { status: nextOrderStatus } : { status: nextOrderStatus, billRequestedAt: null },
+    });
+  }
+}
+
+export async function requestOrderBillForUser(
+  user: SanitizedAuthUser,
+  payload: {
+    orderId: number;
+  },
+) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findFirst({
+      where: { id: payload.orderId, tenantId: user.tenantId },
+      include: { payments: true },
+    });
+
+    if (!order) {
+      throw new Error('Pedido no encontrado.');
+    }
+
+    if (order.status === PrismaOrderStatus.PAID || order.status === PrismaOrderStatus.CANCELLED) {
+      throw new Error('La cuenta ya está cerrada.');
+    }
+
+    if (order.status !== PrismaOrderStatus.SERVED) {
+      throw new Error('Solo puedes solicitar cuenta cuando todo el pedido ya fue entregado al cliente.');
+    }
+
+    const pendingAmount = Math.max(0, Number(order.total) - order.payments.reduce((sum, payment) => sum + Number(payment.amount), 0));
+    if (pendingAmount <= 0) {
+      throw new Error('La cuenta ya no tiene saldo pendiente.');
+    }
+
+    const billRequestedAt = order.billRequestedAt ?? new Date();
+    await tx.order.update({
+      where: { id: order.id },
+      data: { billRequestedAt },
+    });
+
+    return {
+      success: true,
+      billRequestedAt: billRequestedAt.toISOString(),
+    };
+  });
+}
+
+function deriveTicketStatus(statuses: Array<KitchenOrder['status']>): KitchenOrder['status'] {
   if (statuses.includes('IN_PREPARATION')) {
     return 'IN_PREPARATION';
+  }
+
+  if (statuses.includes('PENDING')) {
+    return 'PENDING';
   }
 
   if (statuses.includes('READY')) {
@@ -598,6 +719,22 @@ function deriveTicketStatus(statuses: Array<KitchenOrder['status']>): KitchenOrd
   }
 
   return 'DELIVERED';
+}
+
+function formatKitchenItemStatus(status: KitchenOrder['status']) {
+  if (status === 'IN_PREPARATION') {
+    return 'EN PREPARACION';
+  }
+
+  if (status === 'READY') {
+    return 'LISTO';
+  }
+
+  if (status === 'DELIVERED') {
+    return 'ENTREGADO';
+  }
+
+  return 'PENDIENTE';
 }
 
 function toPriority(elapsedMinutes: number): KitchenOrder['priority'] {
@@ -656,8 +793,15 @@ function buildStationOrders(orderRows: Array<any>, station: PreparationStation):
         elapsedMinutes,
         priority: toPriority(elapsedMinutes),
         items: itemsForStation.map((item: any) => {
+          const itemStatus = toKitchenStatus(item.status);
           const notes = typeof item.notes === 'string' ? item.notes.trim() : '';
-          return `${item.product.name} x${Number(item.quantity)}${notes ? `\n${notes}` : ''}`;
+          return {
+            id: item.id,
+            product: item.product.name,
+            quantity: Number(item.quantity),
+            notes: notes || undefined,
+            status: itemStatus,
+          };
         }),
       } satisfies KitchenOrder;
     })
@@ -788,6 +932,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
     parentId: category.parentId ?? null,
     name: category.name,
     color: category.color ?? undefined,
+    showInPos: category.showInPos ?? undefined,
     station: category.station,
   }));
 
@@ -802,12 +947,17 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
     station: product.category?.station ?? 'KITCHEN',
   }));
 
-  const orders: Order[] = orderRows.map((order) => ({
+  const orders: Order[] = orderRows.map((order) => {
+    const paidItemIds = new Set(order.payments.flatMap((payment) => parseAppliedItemIds(payment.appliedItems)));
+
+    return {
     id: order.id,
     code: order.code,
     branchId: order.branchId,
     type: order.type,
     status: order.status,
+    billRequestedAt: order.billRequestedAt ? order.billRequestedAt.toISOString() : null,
+    readyForPayment: order.status === PrismaOrderStatus.SERVED && Boolean(order.billRequestedAt),
     customerName: order.customer?.name ?? order.table?.code ?? 'Consumidor final',
     area:
       order.table?.area ??
@@ -820,9 +970,11 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
     pendingAmount: Math.max(0, Number(order.total) - order.payments.reduce((sum, payment) => sum + Number(payment.amount), 0)),
     paymentCount: order.payments.length,
     items: order.items.map((item) => ({
+      id: item.id,
       product: item.product.name,
       quantity: Number(item.quantity),
       notes: item.notes ?? undefined,
+      paid: paidItemIds.has(item.id),
     })),
     payments: order.payments
       .slice()
@@ -832,11 +984,13 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
         method: payment.method,
         amount: Number(payment.amount),
         reference: payment.reference ?? null,
+        appliedItemIds: parseAppliedItemIds(payment.appliedItems),
         createdAt: payment.createdAt.toISOString(),
       })),
-  }));
+    };
+  });
 
-  const activeOrders = orders.filter((order) => ['OPEN', 'IN_PREPARATION', 'READY', 'SERVED'].includes(order.status));
+  const activeOrders = orders.filter((order) => ['OPEN', 'IN_PREPARATION', 'READY', 'SERVED'].includes(order.status) && order.pendingAmount > 0);
 
   const tables: RestaurantTable[] = tableRows.map((table) => {
     const activeOrder = activeOrders.find((order) => order.tableCode === table.code);
@@ -966,6 +1120,28 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
               amount: Number(payment.amount),
               method: payment.method,
               createdAt: payment.createdAt.toISOString().slice(11, 16),
+              orderCode: order.code,
+              customerName: order.customer?.name ?? order.table?.code ?? 'Consumidor final',
+              tableCode: order.table?.code ?? undefined,
+              paymentReference: payment.reference ?? null,
+              orderTotal: Number(order.total),
+              orderPaidAmount: order.payments.reduce((sum, item) => sum + Number(item.amount), 0),
+              orderPendingAmount: Math.max(0, Number(order.total) - order.payments.reduce((sum, item) => sum + Number(item.amount), 0)),
+              orderItems: order.items.map((item) => ({
+                quantity: Number(item.quantity),
+                product: item.product.name,
+                notes: item.notes ?? undefined,
+                lineTotal: Number((Number(item.unitPrice) * Number(item.quantity)).toFixed(2)),
+              })),
+              orderPayments: order.payments
+                .slice()
+                .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+                .map((item) => ({
+                  method: item.method,
+                  amount: Number(item.amount),
+                  reference: item.reference ?? null,
+                  createdAt: item.createdAt.toISOString(),
+                })),
             })),
         )
     : [];
@@ -1863,6 +2039,7 @@ export async function createCategoryForUser(
     parentId?: number | null;
     name: string;
     color?: string | null;
+    showInPos?: boolean | null;
     station: 'KITCHEN' | 'BAR' | 'PASTRY';
   },
 ) {
@@ -1890,10 +2067,19 @@ export async function createCategoryForUser(
 
   return prisma.category.create({
     data: {
-      tenantId: user.tenantId,
-      parentId: payload.parentId ?? null,
       name,
       color,
+      showInPos: payload.parentId ? null : payload.showInPos ?? null,
+      tenant: {
+        connect: { id: user.tenantId },
+      },
+      ...(payload.parentId
+        ? {
+            parent: {
+              connect: { id: payload.parentId },
+            },
+          }
+        : {}),
       station: payload.station as PrismaPreparationStation,
     },
   });
@@ -1906,6 +2092,7 @@ export async function updateCategoryForUser(
     parentId?: number | null;
     name: string;
     color?: string | null;
+    showInPos?: boolean | null;
     station: 'KITCHEN' | 'BAR' | 'PASTRY';
   },
 ) {
@@ -1948,9 +2135,16 @@ export async function updateCategoryForUser(
     return tx.category.update({
       where: { id: payload.categoryId },
       data: {
-        parentId: payload.parentId ?? null,
         name,
         color,
+        showInPos: payload.parentId ? null : payload.showInPos ?? null,
+        parent: payload.parentId
+          ? {
+              connect: { id: payload.parentId },
+            }
+          : {
+              disconnect: true,
+            },
         station: payload.station as PrismaPreparationStation,
       },
     });
@@ -2363,6 +2557,7 @@ export async function payOrderForUser(
     receivedAmount?: number | null;
     reference?: string | null;
     proofImage?: string | null;
+    appliedItemIds?: number[] | null;
   },
 ) {
   if (!(await canUseDatabase())) {
@@ -2376,7 +2571,7 @@ export async function payOrderForUser(
   return prisma.$transaction(async (tx) => {
     const order = await tx.order.findFirst({
       where: { id: payload.orderId, tenantId: user.tenantId },
-      include: { table: true, payments: true },
+      include: { table: true, payments: true, items: true },
     });
 
     if (!order) {
@@ -2387,6 +2582,10 @@ export async function payOrderForUser(
       throw new Error('La cuenta ya está cerrada.');
     }
 
+    if (order.status !== PrismaOrderStatus.SERVED || !order.billRequestedAt) {
+      throw new Error('La cuenta solo se puede cobrar cuando ya fue entregada y el mesero la marcó como lista para caja.');
+    }
+
     const total = Number(order.total);
     const paidAmount = order.payments.reduce((sum, payment) => sum + Number(payment.amount), 0);
     const remainingBeforePayment = Math.max(0, total - paidAmount);
@@ -2395,9 +2594,42 @@ export async function payOrderForUser(
       typeof payload.receivedAmount === 'number' && Number.isFinite(payload.receivedAmount) ? payload.receivedAmount : null;
     const proofImage = typeof payload.proofImage === 'string' ? payload.proofImage.trim() : '';
     const amountToRegister = Number(payload.amount);
+    const appliedItemIds = Array.isArray(payload.appliedItemIds)
+      ? [...new Set(payload.appliedItemIds.filter((itemId): itemId is number => Number.isInteger(itemId) && itemId > 0))]
+      : [];
 
     if (amountToRegister > remainingBeforePayment) {
       throw new Error('El monto supera el saldo pendiente de la cuenta.');
+    }
+
+    if (appliedItemIds.length > 0) {
+      const paidItemIds = new Set(order.payments.flatMap((payment) => parseAppliedItemIds(payment.appliedItems)));
+      const itemById = new Map(order.items.map((item) => [item.id, item]));
+      const invalidItemIds = appliedItemIds.filter((itemId) => !itemById.has(itemId));
+      if (invalidItemIds.length > 0) {
+        throw new Error('La selección contiene productos que no pertenecen a esta cuenta.');
+      }
+
+      const alreadyPaidIds = appliedItemIds.filter((itemId) => paidItemIds.has(itemId));
+      if (alreadyPaidIds.length > 0) {
+        throw new Error('Uno o más productos seleccionados ya fueron abonados.');
+      }
+
+      const selectedItemsTotal = Number(
+        appliedItemIds
+          .reduce((sum, itemId) => {
+            const item = itemById.get(itemId);
+            if (!item) {
+              return sum;
+            }
+            return sum + Number(item.unitPrice) * Number(item.quantity);
+          }, 0)
+          .toFixed(2),
+      );
+
+      if (Math.abs(selectedItemsTotal - amountToRegister) > 0.01) {
+        throw new Error('El monto no coincide con el total de los productos seleccionados.');
+      }
     }
 
     if (payload.method === 'CASH') {
@@ -2432,6 +2664,7 @@ export async function payOrderForUser(
         amount: amountToRegister as any,
         reference: reference ? reference : null,
         proofImage: proofImage ? proofImage : null,
+        appliedItems: appliedItemIds.length > 0 ? JSON.stringify(appliedItemIds) : null,
       },
     });
     const remainingAfterPayment = Math.max(0, Number((remainingBeforePayment - amountToRegister).toFixed(2)));
@@ -3690,12 +3923,17 @@ export async function getReportsSummary(
     }),
   ]);
 
-  const reportOrders: Order[] = orderRows.map((order) => ({
+  const reportOrders: Order[] = orderRows.map((order) => {
+    const paidItemIds = new Set(order.payments.flatMap((payment) => parseAppliedItemIds(payment.appliedItems)));
+
+    return {
     id: order.id,
     code: order.code,
     branchId: order.branchId,
     type: order.type as Order['type'],
     status: order.status as Order['status'],
+    billRequestedAt: order.billRequestedAt ? order.billRequestedAt.toISOString() : null,
+    readyForPayment: order.status === PrismaOrderStatus.SERVED && Boolean(order.billRequestedAt),
     customerName: order.customer?.name ?? (order.tableId ? `Mesa ${order.tableId}` : 'Consumidor final'),
     area: order.branch?.name ?? 'Operación',
     total: Number(order.total),
@@ -3706,18 +3944,22 @@ export async function getReportsSummary(
     pendingAmount: Math.max(0, Number(order.total) - order.payments.reduce((sum, payment) => sum + Number(payment.amount), 0)),
     paymentCount: order.payments.length,
     items: order.items.map((item) => ({
+      id: item.id,
       product: item.product.name,
       quantity: Number(item.quantity),
       notes: item.notes ?? undefined,
+      paid: paidItemIds.has(item.id),
     })),
     payments: order.payments.map((payment) => ({
       id: payment.id,
       method: payment.method as Order['payments'][number]['method'],
       amount: Number(payment.amount),
       reference: payment.reference ?? null,
+      appliedItemIds: parseAppliedItemIds(payment.appliedItems),
       createdAt: payment.createdAt.toISOString(),
     })),
-  }));
+    };
+  });
 
   const totalSales = reportOrders.reduce((sum, order) => sum + order.total, 0);
   const topProducts = buildTopProducts(reportOrders);
@@ -3876,14 +4118,7 @@ export async function updateStationOrderStatus(
     throw new Error('Base de datos no disponible.');
   }
 
-  const status =
-    payload.status === 'DELIVERED'
-      ? ('DELIVERED' as unknown as PrismaPreparationStatus)
-      : payload.status === 'READY'
-        ? PrismaPreparationStatus.READY
-        : payload.status === 'IN_PREPARATION'
-          ? PrismaPreparationStatus.IN_PREPARATION
-          : PrismaPreparationStatus.PENDING;
+  const status = toPreparationStatus(payload.status);
 
   const station =
     payload.station === 'BAR'
@@ -3902,14 +4137,16 @@ export async function updateStationOrderStatus(
       throw new Error('Pedido no encontrado.');
     }
 
+    const sourceStatuses = getTransitionSourceStatuses(payload.status);
+
     const activeItemsWhere = {
       orderId: payload.orderId,
       station,
-      status: { in: [PrismaPreparationStatus.PENDING, PrismaPreparationStatus.IN_PREPARATION, PrismaPreparationStatus.READY] },
+      status: { in: sourceStatuses },
     };
 
     const now = new Date();
-    if (payload.status === 'IN_PREPARATION' || payload.status === 'READY') {
+    if (payload.status === 'IN_PREPARATION') {
       await tx.orderItem.updateMany({
         where: { ...activeItemsWhere, startedAt: null } as any,
         data: { startedAt: now } as any,
@@ -3932,24 +4169,76 @@ export async function updateStationOrderStatus(
       throw new Error('No hay items activos para actualizar en esta estación.');
     }
 
-    const pendingCount = await tx.orderItem.count({
+    await syncOrderLifecycleStatus(tx, payload.orderId, order.status);
+
+    return { success: true };
+  });
+}
+
+export async function updateStationOrderItemStatus(
+  user: SanitizedAuthUser,
+  payload: {
+    station: PreparationStation;
+    orderItemId: number;
+    status: 'PENDING' | 'IN_PREPARATION' | 'READY' | 'DELIVERED';
+  },
+) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const status = toPreparationStatus(payload.status);
+
+  const station =
+    payload.station === 'BAR'
+      ? PrismaPreparationStation.BAR
+      : payload.station === 'PASTRY'
+        ? PrismaPreparationStation.PASTRY
+        : PrismaPreparationStation.KITCHEN;
+
+  return prisma.$transaction(async (tx) => {
+    const item = await tx.orderItem.findFirst({
       where: {
-        orderId: payload.orderId,
-        status: { in: [PrismaPreparationStatus.PENDING, PrismaPreparationStatus.IN_PREPARATION] },
+        id: payload.orderItemId,
+        station,
+        order: {
+          tenantId: user.tenantId,
+        },
+      },
+      select: {
+        id: true,
+        orderId: true,
+        status: true,
+        startedAt: true,
+        deliveredAt: true,
+        order: {
+          select: {
+            status: true,
+          },
+        },
       },
     });
 
-    const activeCount = await tx.orderItem.count({ where: { orderId: payload.orderId, status: { in: [PrismaPreparationStatus.PENDING, PrismaPreparationStatus.IN_PREPARATION, PrismaPreparationStatus.READY] } } });
-
-    const nextOrderStatus =
-      activeCount === 0 ? PrismaOrderStatus.SERVED : pendingCount === 0 ? PrismaOrderStatus.READY : PrismaOrderStatus.IN_PREPARATION;
-
-    if (order.status !== PrismaOrderStatus.PAID && order.status !== PrismaOrderStatus.CANCELLED) {
-      await tx.order.update({
-        where: { id: payload.orderId },
-        data: { status: nextOrderStatus },
-      });
+    if (!item) {
+      throw new Error('Platillo no encontrado para esta estación.');
     }
+
+    const sourceStatuses = getTransitionSourceStatuses(payload.status);
+    if (!sourceStatuses.includes(item.status)) {
+      throw new Error('El platillo ya no está en un estado válido para esta acción.');
+    }
+
+    const now = new Date();
+    await tx.orderItem.update({
+      where: { id: payload.orderItemId },
+      data: {
+        status,
+        startedAt: payload.status === 'IN_PREPARATION' ? item.startedAt ?? now : item.startedAt,
+        deliveredAt: payload.status === 'DELIVERED' ? item.deliveredAt ?? now : item.deliveredAt,
+      } as any,
+    });
+
+    await syncOrderLifecycleStatus(tx, item.orderId, item.order.status);
 
     return { success: true };
   });
@@ -3992,7 +4281,7 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
     const price = Number(priceMap.get(item.productId) ?? 0);
     return sum + Number(item.quantity) * price;
   }, 0);
-  const code = `ORD-${String(Date.now()).slice(-6)}`;
+  const code = `ORD-${String(Date.now()).slice(-8)}`;
 
   const order = await prisma.$transaction(async (tx) => {
     let customerId = payload.customerId ?? null;
@@ -4042,6 +4331,8 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
       });
 
       if (openOrder) {
+        const reopenedCode = openOrder.status === PrismaOrderStatus.SERVED ? code : openOrder.code;
+
         if (!openOrder.customerId && customerId) {
           await tx.order.update({ where: { id: openOrder.id }, data: { customerId } });
         }
@@ -4060,7 +4351,12 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
 
         await tx.order.update({
           where: { id: openOrder.id },
-          data: { total: Number(openOrder.total) + addedTotal, status: PrismaOrderStatus.IN_PREPARATION },
+          data: {
+            total: Number(openOrder.total) + addedTotal,
+            status: PrismaOrderStatus.IN_PREPARATION,
+            billRequestedAt: null,
+            ...(reopenedCode !== openOrder.code ? { code: reopenedCode } : {}),
+          },
         });
 
         await applyRecipeConsumption(tx, {

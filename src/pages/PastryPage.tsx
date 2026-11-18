@@ -37,7 +37,7 @@ export default function PastryPage() {
                         key={`${order.id}-${index}`}
                         className="whitespace-pre-wrap rounded-2xl bg-white/[0.03] px-3 py-2"
                       >
-                        {item}
+                        {item.quantity} x {item.product}
                       </div>
                     ))}
                   </div>

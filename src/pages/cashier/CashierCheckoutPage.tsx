@@ -1,4 +1,4 @@
-import { ArrowLeft, Banknote, CreditCard, Landmark, Receipt, Undo2 } from 'lucide-react';
+import { ArrowLeft, Banknote, CreditCard, Landmark, Printer, Receipt, Split, Undo2, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
@@ -7,6 +7,7 @@ import { payOrder } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 
 type Method = 'CASH' | 'CARD' | 'TRANSFER';
+type SplitMode = 'AMOUNT' | 'EQUAL' | 'ITEMS';
 
 function formatMoney(amount: number, currencySymbol: string) {
   return `${currencySymbol} ${amount.toFixed(2)}`;
@@ -14,6 +15,10 @@ function formatMoney(amount: number, currencySymbol: string) {
 
 function escapeHtml(value: string) {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function formatPaymentMethodLabel(method: Method | 'MIXED') {
+  return method === 'CASH' ? 'EFECTIVO' : method === 'CARD' ? 'TARJETA' : method === 'TRANSFER' ? 'TRANSFERENCIA' : 'MIXTO';
 }
 
 export default function CashierCheckoutPage() {
@@ -29,6 +34,9 @@ export default function CashierCheckoutPage() {
   const [proofImage, setProofImage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [splitMode, setSplitMode] = useState<SplitMode>('AMOUNT');
+  const [splitPeopleCount, setSplitPeopleCount] = useState(2);
+  const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
 
   const tableId = params.tableId ? Number(params.tableId) : null;
   const table = useMemo(() => (tableId && snapshot ? snapshot.tables.find((t) => t.id === tableId) ?? null : null), [snapshot, tableId]);
@@ -40,12 +48,29 @@ export default function CashierCheckoutPage() {
   }, [snapshot, table]);
 
   useEffect(() => {
+    void refreshSnapshot();
+  }, [refreshSnapshot]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void refreshSnapshot();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshSnapshot]);
+
+  useEffect(() => {
     if (order) {
       setAmountToPay(order.pendingAmount.toFixed(2));
       setReceivedAmount('');
       setReference('');
       setProofImage(null);
       setError(null);
+      setSplitMode('AMOUNT');
+      setSplitPeopleCount(2);
+      setSelectedItemIds([]);
     }
   }, [order?.id, order?.paymentCount, order?.pendingAmount]);
 
@@ -62,6 +87,8 @@ export default function CashierCheckoutPage() {
     });
   }, [snapshot, order]);
 
+  const selectedSplitLines = useMemo(() => lines.filter((line) => selectedItemIds.includes(line.id)), [lines, selectedItemIds]);
+
   const total = order?.total ?? 0;
   const paidAmount = order?.paidAmount ?? 0;
   const pendingAmount = order?.pendingAmount ?? 0;
@@ -69,9 +96,23 @@ export default function CashierCheckoutPage() {
   const amountValue = Number(amountToPay || 0);
   const receivedValue = Number(receivedAmount || 0);
   const change = method === 'CASH' && Number.isFinite(receivedValue) ? Math.max(0, receivedValue - amountValue) : 0;
+  const isChargeEnabled = Boolean(order?.readyForPayment);
+  const selectedItemsAmount = useMemo(
+    () => selectedSplitLines.reduce((sum, line) => sum + (line.lineTotal ?? 0), 0),
+    [selectedSplitLines],
+  );
+  const chargeBlockMessage =
+    order?.status === 'READY'
+      ? 'La cuenta todavía está lista en estación, pero aún no se ha marcado como entregada al cliente.'
+      : order?.status === 'IN_PREPARATION'
+        ? 'La cuenta sigue en preparación. Caja podrá cobrar cuando todo el pedido se entregue al cliente.'
+        : order?.status === 'OPEN'
+          ? 'La cuenta aún no entra en preparación. Caja podrá cobrar cuando el pedido se entregue al cliente.'
+          : null;
 
   function buildReceiptHtml(payload: {
-    method: Method;
+    title?: string;
+    method: Method | 'MIXED';
     tableCode: string;
     orderCode: string;
     customerName: string;
@@ -81,6 +122,10 @@ export default function CashierCheckoutPage() {
     paidAmount: number;
     pendingAmount: number;
     currencySymbol: string;
+    payments?: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>;
+    showPaymentsHistory?: boolean;
+    showPaymentMeta?: boolean;
+    footerLabel?: string;
     receivedAmount?: number;
     change?: number;
     reference?: string;
@@ -92,8 +137,10 @@ export default function CashierCheckoutPage() {
     const paymentLabel = formatMoney(payload.paymentAmount, payload.currencySymbol);
     const paidLabel = formatMoney(payload.paidAmount, payload.currencySymbol);
     const pendingLabel = formatMoney(payload.pendingAmount, payload.currencySymbol);
-    const methodLabel = payload.method === 'CASH' ? 'EFECTIVO' : payload.method === 'CARD' ? 'TARJETA' : 'TRANSFERENCIA';
-    const title = payload.pendingAmount > 0 ? 'ABONO' : 'TICKET';
+    const previousPaidAmount = Math.max(0, Number((payload.paidAmount - payload.paymentAmount).toFixed(2)));
+    const previousPaidLabel = formatMoney(previousPaidAmount, payload.currencySymbol);
+    const methodLabel = formatPaymentMethodLabel(payload.method);
+    const title = payload.title ?? (payload.pendingAmount > 0 ? 'RECIBO DE ABONO' : 'LIQUIDACION FINAL');
 
     const itemsHtml = payload.lines
       .map((item) => {
@@ -105,12 +152,44 @@ export default function CashierCheckoutPage() {
       .join('');
 
     const paymentMeta = payload.method === 'CASH'
-      ? `<div class="meta"><strong>Pago:</strong> ${methodLabel}<br/><strong>Abono:</strong> ${escapeHtml(paymentLabel)}<br/><strong>Recibido:</strong> ${escapeHtml(
+      ? `<div class="meta"><strong>Pago:</strong> ${methodLabel}<br/><strong>Pago actual:</strong> ${escapeHtml(paymentLabel)}<br/><strong>Recibido:</strong> ${escapeHtml(
           formatMoney(payload.receivedAmount ?? 0, payload.currencySymbol),
         )}<br/><strong>Cambio:</strong> ${escapeHtml(formatMoney(payload.change ?? 0, payload.currencySymbol))}</div>`
-      : `<div class="meta"><strong>Pago:</strong> ${methodLabel}<br/><strong>Abono:</strong> ${escapeHtml(paymentLabel)}<br/><strong>Referencia:</strong> ${escapeHtml(
+      : `<div class="meta"><strong>Pago:</strong> ${methodLabel}<br/><strong>Pago actual:</strong> ${escapeHtml(paymentLabel)}<br/><strong>Referencia:</strong> ${escapeHtml(
           payload.reference ?? '',
         )}</div>`;
+    const paymentsHistory =
+      payload.showPaymentsHistory && payload.payments?.length
+        ? `<div class="divider"></div><div class="meta"><strong>PAGOS REGISTRADOS</strong></div>${payload.payments
+            .map((payment) => {
+              const paymentDate = payment.createdAt
+                ? new Date(payment.createdAt).toLocaleString('es-GT', { dateStyle: 'short', timeStyle: 'short' })
+                : '';
+              const paymentReference = payment.reference ? `<br/><strong>Ref:</strong> ${escapeHtml(payment.reference)}` : '';
+              return `<div class="meta"><strong>${formatPaymentMethodLabel(payment.method)}</strong> ${escapeHtml(
+                formatMoney(payment.amount, payload.currencySymbol),
+              )}${paymentDate ? `<br/>${escapeHtml(paymentDate)}` : ''}${paymentReference}</div>`;
+            })
+            .join('')}`
+        : '';
+
+    const summaryRows = [
+      `<div class="row"><div class="left">TOTAL CUENTA</div><div class="right">${escapeHtml(totalLabel)}</div></div>`,
+      previousPaidAmount > 0
+        ? `<div class="row"><div class="left">ABONOS PREVIOS</div><div class="right">${escapeHtml(previousPaidLabel)}</div></div>`
+        : '',
+      `<div class="row"><div class="left">${payload.pendingAmount > 0 ? 'ABONO REGISTRADO' : 'PAGO ACTUAL'}</div><div class="right">${escapeHtml(paymentLabel)}</div></div>`,
+      previousPaidAmount > 0 || payload.pendingAmount > 0
+        ? `<div class="row"><div class="left">TOTAL ABONADO</div><div class="right">${escapeHtml(paidLabel)}</div></div>`
+        : '',
+      `<div class="row"><div class="left">SALDO PENDIENTE</div><div class="right">${escapeHtml(pendingLabel)}</div></div>`,
+    ]
+      .filter(Boolean)
+      .join('');
+    const summaryFormula =
+      previousPaidAmount > 0
+        ? `<div class="summary-note">${escapeHtml(previousPaidLabel)} + ${escapeHtml(paymentLabel)} = ${escapeHtml(paidLabel)}</div>`
+        : '';
 
     return `<!doctype html>
 <html>
@@ -132,6 +211,7 @@ export default function CashierCheckoutPage() {
       .right { flex: 0 0 40%; max-width: 40%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 900; }
       .note { font-weight: 700; font-size: 12px; opacity: 0.88; margin-top: 2px; white-space: pre-wrap; }
       .summary .row { padding: 3px 0; }
+      .summary-note { margin-top: 6px; text-align: center; font-size: 11px; font-weight: 800; opacity: 0.82; }
       .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
       @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
     </style>
@@ -148,15 +228,10 @@ export default function CashierCheckoutPage() {
       <div class="divider"></div>
       ${itemsHtml || '<div class="meta">Sin items.</div>'}
       <div class="divider"></div>
-      <div class="summary">
-        <div class="row"><div class="left">TOTAL CUENTA</div><div class="right">${escapeHtml(totalLabel)}</div></div>
-        <div class="row"><div class="left">ABONO REGISTRADO</div><div class="right">${escapeHtml(paymentLabel)}</div></div>
-        <div class="row"><div class="left">ABONADO ACUMULADO</div><div class="right">${escapeHtml(paidLabel)}</div></div>
-        <div class="row"><div class="left">SALDO PENDIENTE</div><div class="right">${escapeHtml(pendingLabel)}</div></div>
-      </div>
-      <div class="divider"></div>
-      ${paymentMeta}
-      <div class="footer">${payload.pendingAmount > 0 ? 'PAGO PARCIAL REGISTRADO' : 'CUENTA LIQUIDADA'}</div>
+      <div class="summary">${summaryRows}${summaryFormula}</div>
+      ${paymentsHistory}
+      ${payload.showPaymentMeta === false ? '' : `<div class="divider"></div>${paymentMeta}`}
+      <div class="footer">${escapeHtml(payload.footerLabel ?? (payload.pendingAmount > 0 ? 'ABONO REGISTRADO' : 'CUENTA LIQUIDADA'))}</div>
     </div>
     <script>
       window.onload = () => { window.print(); };
@@ -185,6 +260,78 @@ export default function CashierCheckoutPage() {
     printWindow.focus();
   }
 
+  function buildFullAccountReceiptHtml(payments: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>) {
+    if (!order) {
+      return '';
+    }
+
+    return buildReceiptHtml({
+      title: pendingAmount > 0 ? 'PRECUENTA' : 'LIQUIDACION FINAL',
+      method: payments.at(-1)?.method === 'CARD' || payments.at(-1)?.method === 'TRANSFER' ? payments.at(-1)!.method : 'CASH',
+      tableCode: table?.code ?? order.tableCode ?? '',
+      orderCode: order.code,
+      customerName: order.customerName || 'Consumidor final',
+      lines: lines.map((line) => ({
+        quantity: line.quantity,
+        product: line.product,
+        ...(line.notes ? { notes: line.notes } : {}),
+        lineTotal: line.lineTotal,
+      })),
+      total,
+      paymentAmount: payments.at(-1)?.amount ?? 0,
+      paidAmount: payments.reduce((sum, payment) => sum + payment.amount, 0),
+      pendingAmount: Math.max(0, Number((total - payments.reduce((sum, payment) => sum + payment.amount, 0)).toFixed(2))),
+      currencySymbol,
+      payments,
+      showPaymentsHistory: true,
+      showPaymentMeta: payments.length > 0,
+      footerLabel: pendingAmount > 0 ? 'PRECUENTA INFORMATIVA' : 'LIQUIDACION FINAL REGISTRADA',
+      reference: payments.at(-1)?.reference ?? undefined,
+    });
+  }
+
+  function handlePrintFullAccount(paymentsOverride?: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>) {
+    if (!order) {
+      return;
+    }
+
+    const payments = paymentsOverride ?? order.payments;
+    const printWindow = openPrintWindow();
+    if (!printWindow) {
+      return;
+    }
+
+    renderPrintWindow(printWindow, buildFullAccountReceiptHtml(payments));
+  }
+
+  function applyEqualSplit(peopleCount: number) {
+    if (pendingAmount <= 0) {
+      return;
+    }
+
+    const normalizedPeople = Math.max(2, peopleCount);
+    setSplitMode('EQUAL');
+    setSplitPeopleCount(normalizedPeople);
+    setAmountToPay((pendingAmount / normalizedPeople).toFixed(2));
+  }
+
+  function toggleSplitLine(itemId: number) {
+    setSplitMode('ITEMS');
+    setSelectedItemIds((current) => {
+      const targetLine = lines.find((line) => line.id === itemId);
+      if (targetLine?.paid) {
+        return current;
+      }
+
+      const next = current.includes(itemId) ? current.filter((currentItemId) => currentItemId !== itemId) : [...current, itemId];
+      const nextAmount = lines
+        .filter((line) => next.includes(line.id))
+        .reduce((sum, line) => sum + (line.lineTotal ?? 0), 0);
+      setAmountToPay(nextAmount > 0 ? Math.min(nextAmount, pendingAmount).toFixed(2) : pendingAmount.toFixed(2));
+      return next;
+    });
+  }
+
   async function handlePay() {
     if (!order) {
       return;
@@ -200,11 +347,28 @@ export default function CashierCheckoutPage() {
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error('Ingresa un monto válido para el abono.');
       }
+      if (splitMode === 'ITEMS' && selectedItemIds.length === 0) {
+        throw new Error('Selecciona al menos un producto para cobrar por productos.');
+      }
       if (amount > pendingAmount) {
         throw new Error('El monto no puede superar el saldo pendiente.');
       }
 
       let receiptPayload: Parameters<typeof buildReceiptHtml>[0] | null = null;
+      const receiptLines =
+        splitMode === 'ITEMS' && selectedSplitLines.length
+          ? selectedSplitLines.map((line) => ({
+              quantity: line.quantity,
+              product: line.product,
+              ...(line.notes ? { notes: line.notes } : {}),
+              lineTotal: line.lineTotal,
+            }))
+          : lines.map((line) => ({
+              quantity: line.quantity,
+              product: line.product,
+              ...(line.notes ? { notes: line.notes } : {}),
+              lineTotal: line.lineTotal,
+            }));
 
       if (method === 'CASH') {
         const numericReceived = Number(receivedAmount);
@@ -217,6 +381,7 @@ export default function CashierCheckoutPage() {
           method,
           amount,
           receivedAmount: numericReceived,
+          appliedItemIds: splitMode === 'ITEMS' ? selectedItemIds : null,
         });
 
         receiptPayload = {
@@ -224,7 +389,7 @@ export default function CashierCheckoutPage() {
           tableCode: table?.code ?? order.tableCode ?? '',
           orderCode: order.code,
           customerName: order.customerName || 'Consumidor final',
-          lines: lines.map((line) => ({ quantity: line.quantity, product: line.product, ...(line.notes ? { notes: line.notes } : {}), lineTotal: line.lineTotal })),
+          lines: receiptLines,
           total,
           paymentAmount: result.registeredAmount,
           paidAmount: result.paidAmount,
@@ -240,6 +405,13 @@ export default function CashierCheckoutPage() {
         }
 
         if (result.completed) {
+          const completedPayments = [
+            ...order.payments,
+            { method, amount: result.registeredAmount, reference: null, createdAt: new Date().toISOString() },
+          ];
+          if (window.confirm('Cuenta liquidada. Deseas imprimir la liquidacion final detallada con todos los abonos registrados?')) {
+            handlePrintFullAccount(completedPayments);
+          }
           navigate('/cashier/mesas', { replace: true });
         }
       } else {
@@ -256,6 +428,7 @@ export default function CashierCheckoutPage() {
           amount,
           reference: normalizedReference,
           proofImage: method === 'TRANSFER' ? proofImage : null,
+          appliedItemIds: splitMode === 'ITEMS' ? selectedItemIds : null,
         });
 
         receiptPayload = {
@@ -263,7 +436,7 @@ export default function CashierCheckoutPage() {
           tableCode: table?.code ?? order.tableCode ?? '',
           orderCode: order.code,
           customerName: order.customerName || 'Consumidor final',
-          lines: lines.map((line) => ({ quantity: line.quantity, product: line.product, ...(line.notes ? { notes: line.notes } : {}), lineTotal: line.lineTotal })),
+          lines: receiptLines,
           total,
           paymentAmount: result.registeredAmount,
           paidAmount: result.paidAmount,
@@ -278,6 +451,13 @@ export default function CashierCheckoutPage() {
         }
 
         if (result.completed) {
+          const completedPayments = [
+            ...order.payments,
+            { method, amount: result.registeredAmount, reference: normalizedReference, createdAt: new Date().toISOString() },
+          ];
+          if (window.confirm('Cuenta liquidada. Deseas imprimir la liquidacion final detallada con todos los abonos registrados?')) {
+            handlePrintFullAccount(completedPayments);
+          }
           navigate('/cashier/mesas', { replace: true });
         }
       }
@@ -323,6 +503,10 @@ export default function CashierCheckoutPage() {
             <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base">
               Cuenta: {order.code} • Cliente: {order.customerName}
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <StatusBadge value={order.status} />
+              {order.readyForPayment ? <StatusBadge value="BILL_REQUESTED" /> : null}
+            </div>
             <p className="mt-2 text-xs uppercase tracking-[0.25em] text-amber-300">Cajero logeado: {user.name}</p>
           </div>
           <button
@@ -339,24 +523,53 @@ export default function CashierCheckoutPage() {
       <main className="mx-auto mt-6 grid max-w-6xl gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <section className="space-y-6">
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
-            <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Detalle de cuenta</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Detalle de cuenta</p>
+              {splitMode === 'ITEMS' && selectedSplitLines.length ? (
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-700 dark:text-violet-300">
+                  {selectedSplitLines.length} producto(s) marcado(s)
+                </span>
+              ) : null}
+            </div>
             <div className="mt-4 space-y-2 text-sm text-slate-700 dark:text-zinc-200">
-              {lines.map((item, index) => (
-                <div key={`${item.product}-${index}`} className="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-white/[0.03]">
+              {lines.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={!isChargeEnabled || item.paid}
+                  onClick={() => toggleSplitLine(item.id)}
+                  className={`w-full rounded-2xl border px-4 py-3 text-left transition dark:bg-white/[0.03] ${
+                    item.paid
+                      ? 'cursor-not-allowed border-emerald-300/30 bg-emerald-500/10 opacity-70'
+                      : selectedItemIds.includes(item.id)
+                        ? 'border-violet-300/35 bg-violet-500/10'
+                        : 'border-transparent bg-slate-50 dark:border-white/5'
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
-                      <p className="truncate font-semibold text-slate-950 dark:text-white">
-                        {item.quantity} x {item.product}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate font-semibold text-slate-950 dark:text-white">
+                          {item.quantity} x {item.product}
+                        </p>
+                        {item.paid ? (
+                          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-700 dark:text-emerald-300">
+                            Abonado
+                          </span>
+                        ) : null}
+                      </div>
                       {item.notes ? <p className="mt-1 whitespace-pre-wrap text-xs text-slate-500 dark:text-zinc-500">{item.notes}</p> : null}
                     </div>
                     <div className="shrink-0 text-right font-semibold text-slate-950 dark:text-white">
                       {item.lineTotal !== null ? formatMoney(item.lineTotal, currencySymbol) : ''}
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
+            <p className="mt-3 text-xs text-slate-500 dark:text-zinc-500">
+              Toca productos para calcular un cobro por selección. Los productos ya abonados quedan bloqueados y marcados en verde.
+            </p>
           </section>
 
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
@@ -406,6 +619,91 @@ export default function CashierCheckoutPage() {
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Registrar abono</p>
 
+            {chargeBlockMessage ? (
+              <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+                {chargeBlockMessage}
+              </div>
+            ) : null}
+
+            <div className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-white/10 dark:bg-black/20">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!isChargeEnabled || submitting}
+                  onClick={() => {
+                    setSplitMode('AMOUNT');
+                    setSelectedItemIds([]);
+                    setAmountToPay(pendingAmount.toFixed(2));
+                  }}
+                  className={`inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-xs font-semibold transition ${
+                    splitMode === 'AMOUNT'
+                      ? 'border-amber-300/40 bg-amber-300/10 text-amber-900 dark:text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200'
+                  }`}
+                >
+                  <AppIcon icon={Split} className="h-4 w-4" />
+                  Por monto
+                </button>
+                <button
+                  type="button"
+                  disabled={!isChargeEnabled || submitting}
+                  onClick={() => applyEqualSplit(splitPeopleCount)}
+                  className={`inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-xs font-semibold transition ${
+                    splitMode === 'EQUAL'
+                      ? 'border-amber-300/40 bg-amber-300/10 text-amber-900 dark:text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200'
+                  }`}
+                >
+                  <AppIcon icon={Users} className="h-4 w-4" />
+                  Por personas
+                </button>
+                <button
+                  type="button"
+                  disabled={!isChargeEnabled || submitting}
+                  onClick={() => setSplitMode('ITEMS')}
+                  className={`inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-xs font-semibold transition ${
+                    splitMode === 'ITEMS'
+                      ? 'border-amber-300/40 bg-amber-300/10 text-amber-900 dark:text-white'
+                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200'
+                  }`}
+                >
+                  <AppIcon icon={Receipt} className="h-4 w-4" />
+                  Por productos
+                </button>
+              </div>
+
+              {splitMode === 'EQUAL' ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    {[2, 3, 4, 5, 6].map((count) => (
+                      <button
+                        key={count}
+                        type="button"
+                        disabled={!isChargeEnabled || submitting}
+                        onClick={() => applyEqualSplit(count)}
+                        className={`h-9 rounded-2xl border px-3 text-xs font-semibold transition ${
+                          splitPeopleCount === count
+                            ? 'border-violet-300/40 bg-violet-500/10 text-violet-900 dark:text-white'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200'
+                        }`}
+                      >
+                        {count} personas
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-zinc-500">
+                    Divide el saldo pendiente entre las personas seleccionadas.
+                  </p>
+                </div>
+              ) : null}
+
+              {splitMode === 'ITEMS' ? (
+                <div className="text-xs text-slate-500 dark:text-zinc-500">
+                  Productos seleccionados: <span className="font-semibold text-slate-700 dark:text-zinc-200">{formatMoney(selectedItemsAmount, currencySymbol)}</span>
+                </div>
+              ) : null}
+            </div>
+
             <div className="mt-4">
               <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Monto a cobrar</label>
               <input
@@ -413,6 +711,7 @@ export default function CashierCheckoutPage() {
                 onChange={(event) => setAmountToPay(event.target.value)}
                 placeholder={pendingAmount.toFixed(2)}
                 inputMode="decimal"
+                disabled={!isChargeEnabled || submitting}
                 className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
               />
             </div>
@@ -427,6 +726,7 @@ export default function CashierCheckoutPage() {
                   key={option.value}
                   type="button"
                   onClick={() => setMethod(option.value)}
+                  disabled={!isChargeEnabled || submitting}
                   className={`inline-flex h-12 items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-semibold transition ${
                     method === option.value
                       ? 'border-amber-300/40 bg-amber-300/10 text-amber-900 dark:text-white'
@@ -447,6 +747,7 @@ export default function CashierCheckoutPage() {
                   onChange={(event) => setReceivedAmount(event.target.value)}
                   placeholder={amountToPay || pendingAmount.toFixed(2)}
                   inputMode="decimal"
+                  disabled={!isChargeEnabled || submitting}
                   className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
                 />
                 <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-white/10 dark:bg-black/20 dark:text-zinc-200">
@@ -468,6 +769,7 @@ export default function CashierCheckoutPage() {
                     value={reference}
                     onChange={(event) => setReference(event.target.value)}
                     placeholder="Ej: 000123456789"
+                    disabled={!isChargeEnabled || submitting}
                     className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
                   />
                 </div>
@@ -477,6 +779,7 @@ export default function CashierCheckoutPage() {
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={!isChargeEnabled || submitting}
                       onChange={(event) => {
                         const file = event.target.files?.[0] ?? null;
                         if (!file) {
@@ -530,12 +833,21 @@ export default function CashierCheckoutPage() {
 
             <button
               type="button"
-              disabled={submitting}
+              disabled={submitting || !isChargeEnabled}
               onClick={() => void handlePay()}
               className="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-500/15 disabled:opacity-50 dark:text-white"
             >
               <AppIcon icon={Receipt} className="h-4 w-4" />
               {submitting ? 'Procesando...' : pendingAmount === amountValue ? 'Liquidar cuenta' : 'Registrar abono'}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => handlePrintFullAccount()}
+              className="mt-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
+            >
+              <AppIcon icon={Printer} className="h-4 w-4" />
+              {pendingAmount > 0 ? 'Imprimir precuenta' : 'Imprimir liquidacion final'}
             </button>
           </section>
         </aside>

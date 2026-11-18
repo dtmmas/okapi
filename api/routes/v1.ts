@@ -58,6 +58,7 @@ import {
   updateTableForUser,
   moveOpenOrderToTable,
   updateStationOrderStatus,
+  updateStationOrderItemStatus,
   updateBrandForUser,
   updateBranchForUser,
   updateRoleProfileForUser,
@@ -66,6 +67,7 @@ import {
   saveProductRecipeForUser,
   saveSubRecipeFormulaForUser,
   produceSubRecipeForUser,
+  requestOrderBillForUser,
 } from '../services/restaurant-service.js';
 
 const router = Router();
@@ -231,6 +233,11 @@ router.post('/orders/:orderId/pay', requireAuth, requirePermissions(['CASH_MANAG
       typeof req.body?.receivedAmount === 'number' ? req.body.receivedAmount : Number(req.body?.receivedAmount ?? NaN);
     const reference = typeof req.body?.reference === 'string' ? req.body.reference : null;
     const proofImage = typeof req.body?.proofImage === 'string' ? req.body.proofImage : null;
+    const appliedItemIds = Array.isArray(req.body?.appliedItemIds)
+      ? req.body.appliedItemIds
+          .map((itemId: unknown) => (typeof itemId === 'number' ? itemId : Number(itemId)))
+          .filter((itemId: number) => Number.isInteger(itemId) && itemId > 0)
+      : null;
     const method = methodRaw === 'CARD' ? 'CARD' : methodRaw === 'TRANSFER' ? 'TRANSFER' : methodRaw === 'MIXED' ? 'MIXED' : 'CASH';
 
     if (!orderId || !Number.isFinite(amount) || amount <= 0) {
@@ -244,10 +251,28 @@ router.post('/orders/:orderId/pay', requireAuth, requirePermissions(['CASH_MANAG
       receivedAmount: Number.isFinite(receivedAmount) ? receivedAmount : null,
       reference,
       proofImage,
+      appliedItemIds,
     });
     return res.json({ success: true, data: result });
   } catch (error) {
     return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible cobrar.' });
+  }
+});
+
+router.post('/orders/:orderId/request-bill', requireAuth, requirePermissions(['POS_USE']), async (req: ApiRequest, res) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'orderId inválido.' });
+    }
+
+    const result = await requestOrderBillForUser(req.authUser, { orderId });
+    return res.json({ success: true, data: result, message: 'Cuenta solicitada correctamente.' });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible solicitar cuenta.',
+    });
   }
 });
 
@@ -344,6 +369,25 @@ router.put('/tables/:tableId/status', requireAuth, requirePermissions(['TABLES_M
   }
 });
 
+router.put('/tables/:tableId/reservation', requireAuth, requirePermissions(['POS_USE']), async (req: ApiRequest, res) => {
+  try {
+    const tableId = Number(req.params.tableId);
+    const schema = z.object({
+      status: z.enum(['FREE', 'RESERVED']),
+    });
+    const payload = schema.parse(req.body);
+
+    if (!tableId) {
+      return res.status(400).json({ success: false, message: 'tableId inválido.' });
+    }
+
+    await updateTableStatusForUser(req.authUser, { tableId, status: payload.status });
+    return res.json({ success: true, data: { success: true } });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible actualizar la reserva.' });
+  }
+});
+
 router.post('/tables/move', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
   try {
     const fromTableId = Number(req.body?.fromTableId);
@@ -412,6 +456,38 @@ router.patch('/stations/:station/orders/:orderId/status', requireAuth, requirePe
     return res.status(400).json({
       success: false,
       message: error instanceof Error ? error.message : 'No fue posible actualizar el estado.',
+    });
+  }
+});
+
+router.patch('/stations/:station/items/:orderItemId/status', requireAuth, requirePermissions(['KITCHEN_UPDATE']), async (req: ApiRequest, res) => {
+  try {
+    const stationRaw = String(req.params.station || '').toUpperCase();
+    const orderItemId = Number(req.params.orderItemId);
+    const statusRaw = String(req.body?.status || '').toUpperCase();
+
+    const station = stationRaw === 'BAR' ? 'BAR' : stationRaw === 'PASTRY' ? 'PASTRY' : stationRaw === 'KITCHEN' ? 'KITCHEN' : null;
+    const status =
+      statusRaw === 'PENDING'
+        ? 'PENDING'
+        : statusRaw === 'IN_PREPARATION'
+          ? 'IN_PREPARATION'
+          : statusRaw === 'READY'
+            ? 'READY'
+            : statusRaw === 'DELIVERED'
+              ? 'DELIVERED'
+              : null;
+
+    if (!station || !orderItemId || !status) {
+      return res.status(400).json({ success: false, message: 'Parámetros inválidos.' });
+    }
+
+    await updateStationOrderItemStatus(req.authUser, { station, orderItemId, status });
+    return res.json({ success: true, message: 'Estado del platillo actualizado.' });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible actualizar el estado del platillo.',
     });
   }
 });
@@ -863,6 +939,7 @@ const categorySchema = z.object({
   parentId: z.number().int().positive().nullable().optional(),
   name: z.string().min(1),
   color: z.string().nullable().optional(),
+  showInPos: z.boolean().nullable().optional(),
   station: z.enum(['KITCHEN', 'BAR', 'PASTRY']),
 });
 
@@ -886,6 +963,7 @@ router.post('/menu/categories', requireAuth, requirePermissions(['INVENTORY_MANA
       parentId: parsed.data.parentId ?? null,
       name: parsed.data.name,
       color: parsed.data.color ?? null,
+      showInPos: parsed.data.showInPos ?? null,
       station: parsed.data.station,
     };
     const created = await createCategoryForUser(req.authUser, payload);
@@ -912,6 +990,7 @@ router.patch('/menu/categories/:categoryId', requireAuth, requirePermissions(['I
       parentId: parsed.data.parentId ?? null,
       name: parsed.data.name,
       color: parsed.data.color ?? null,
+      showInPos: parsed.data.showInPos ?? null,
       station: parsed.data.station,
     };
     const updated = await updateCategoryForUser(req.authUser, payload);

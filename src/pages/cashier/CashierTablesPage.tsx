@@ -1,3 +1,4 @@
+import { RotateCw } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
@@ -11,6 +12,7 @@ export default function CashierTablesPage() {
   const snapshot = useSessionStore((state) => state.snapshot);
   const user = useSessionStore((state) => state.user);
   const refreshSnapshot = useSessionStore((state) => state.refreshSnapshot);
+  const logout = useSessionStore((state) => state.logout);
 
   const tables = snapshot?.tables ?? [];
   const activeOrders = snapshot?.activeOrders ?? [];
@@ -20,6 +22,16 @@ export default function CashierTablesPage() {
 
   useEffect(() => {
     void refreshSnapshot();
+  }, [refreshSnapshot]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void refreshSnapshot();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [refreshSnapshot]);
 
   useEffect(() => {
@@ -35,7 +47,19 @@ export default function CashierTablesPage() {
     return new Map(activeOrders.map((order) => [order.tableCode ?? '', order]));
   }, [activeOrders]);
   const hasAccountsToCharge = activeOrders.some((order) => Boolean(order.tableCode));
-  const occupiedTables = useMemo(() => tables.filter((table) => Boolean(table.code ? orderByTableCode.get(table.code) : null)), [orderByTableCode, tables]);
+  const occupiedTables = useMemo(
+    () =>
+      tables
+        .filter((table) => Boolean(table.code ? orderByTableCode.get(table.code) : null))
+        .sort((left, right) => {
+          const leftOrder = left.code ? orderByTableCode.get(left.code) ?? null : null;
+          const rightOrder = right.code ? orderByTableCode.get(right.code) ?? null : null;
+          const leftPriority = leftOrder?.readyForPayment ? 1 : 0;
+          const rightPriority = rightOrder?.readyForPayment ? 1 : 0;
+          return rightPriority - leftPriority;
+        }),
+    [orderByTableCode, tables],
+  );
   const areaTabs = useMemo(() => getSortedAreas(occupiedTables.map((table) => table.area)), [occupiedTables]);
 
   useEffect(() => {
@@ -64,6 +88,7 @@ export default function CashierTablesPage() {
     }
     return counts;
   }, [occupiedTables]);
+  const readyToChargeCount = useMemo(() => activeOrders.filter((order) => order.readyForPayment).length, [activeOrders]);
 
   if (!user || !snapshot) {
     return null;
@@ -82,8 +107,19 @@ export default function CashierTablesPage() {
             <h1 className="mt-3 font-display text-3xl text-slate-950 dark:text-white sm:text-4xl lg:text-5xl 2xl:text-6xl">Mesas</h1>
             <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">Selecciona una mesa ocupada para cobrar.</p>
             <p className="mt-2 text-xs uppercase tracking-[0.25em] text-amber-300">Cajero logeado: {user.name}</p>
+            <p className="mt-2 text-xs uppercase tracking-[0.25em] text-violet-600 dark:text-violet-300">
+              {readyToChargeCount} cuenta(s) solicitada(s) para cobro
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void refreshSnapshot()}
+              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-violet-300/30 bg-violet-500/10 px-4 text-sm font-semibold text-violet-900 transition hover:bg-violet-500/15 dark:text-white sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
+            >
+              <AppIcon icon={RotateCw} className="h-4 w-4" />
+              Actualizar
+            </button>
             <button
               type="button"
               onClick={() => navigate('/caja')}
@@ -93,7 +129,7 @@ export default function CashierTablesPage() {
             </button>
             <button
               type="button"
-              onClick={() => navigate('/dashboard')}
+              onClick={logout}
               className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
             >
               Salir
@@ -145,13 +181,18 @@ export default function CashierTablesPage() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {visibleTables.map((table) => {
             const order = table.code ? orderByTableCode.get(table.code) ?? null : null;
+            const isReadyToCharge = Boolean(order?.readyForPayment);
 
             return (
               <button
                 key={table.id}
                 type="button"
                 onClick={() => navigate(`/cashier/cobrar/${table.id}`)}
-                className="w-full rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/45 dark:shadow-none dark:hover:bg-zinc-950/60"
+                className={`w-full rounded-[28px] border bg-white p-5 text-left shadow-sm transition hover:bg-slate-50 dark:bg-zinc-950/45 dark:shadow-none dark:hover:bg-zinc-950/60 ${
+                  isReadyToCharge
+                    ? 'border-violet-300/40 ring-2 ring-violet-300/15 dark:border-violet-400/30 dark:ring-violet-400/10'
+                    : 'border-slate-200 dark:border-white/10'
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -160,6 +201,7 @@ export default function CashierTablesPage() {
                     <p className="mt-2 truncate text-sm text-slate-600 dark:text-zinc-400">{table.area}</p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
+                    {isReadyToCharge ? <StatusBadge value="BILL_REQUESTED" /> : null}
                     <StatusBadge value={table.status} />
                   </div>
                 </div>
@@ -170,6 +212,16 @@ export default function CashierTablesPage() {
                       <span className="text-slate-500 dark:text-zinc-400">Cuenta</span>
                       <span className="font-semibold text-slate-950 dark:text-white">{order.code}</span>
                     </p>
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <span className="text-slate-500 dark:text-zinc-400">Estado de servicio</span>
+                      <StatusBadge value={order.status} />
+                    </div>
+                    {order.readyForPayment ? (
+                      <div className="mt-2 flex items-center justify-between gap-3">
+                        <span className="text-slate-500 dark:text-zinc-400">Cobro</span>
+                        <StatusBadge value="BILL_REQUESTED" />
+                      </div>
+                    ) : null}
                     <p className="mt-2 flex items-center justify-between gap-3">
                       <span className="text-slate-500 dark:text-zinc-400">Cliente</span>
                       <span className="truncate font-semibold text-slate-950 dark:text-white">{order.customerName}</span>
@@ -186,6 +238,13 @@ export default function CashierTablesPage() {
                         <span className="font-semibold text-slate-950 dark:text-white">
                           {currencySymbol} {order.paidAmount.toFixed(2)}
                         </span>
+                      </p>
+                    ) : null}
+                    {!order.readyForPayment ? (
+                      <p className="mt-3 text-xs font-semibold uppercase tracking-[0.2em] text-amber-600 dark:text-amber-300">
+                        {order.status === 'SERVED'
+                          ? 'Pedido entregado. Falta que el mesero solicite cuenta.'
+                          : 'Caja solo puede cobrar cuando el pedido se entregue y el mesero solicite cuenta.'}
                       </p>
                     ) : null}
                   </div>

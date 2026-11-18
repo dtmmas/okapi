@@ -131,6 +131,8 @@ export type RestaurantOrder = {
   branchId: number;
   type: string;
   status: string;
+  billRequestedAt?: string | null;
+  readyForPayment?: boolean;
   customerName: string;
   area: string;
   total: number;
@@ -141,16 +143,19 @@ export type RestaurantOrder = {
   pendingAmount: number;
   paymentCount: number;
   items: Array<{
+    id: number;
     product: string;
     quantity: number;
     modifier?: string;
     notes?: string;
+    paid?: boolean;
   }>;
   payments: Array<{
     id: number;
     method: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
     amount: number;
     reference?: string | null;
+    appliedItemIds?: number[];
     createdAt: string;
   }>;
 };
@@ -177,7 +182,13 @@ export type KitchenOrder = {
   startedAt: string;
   elapsedMinutes: number;
   priority: 'ALTA' | 'MEDIA' | 'BAJA';
-  items: string[];
+  items: Array<{
+    id: number;
+    product: string;
+    quantity: number;
+    notes?: string;
+    status: 'PENDING' | 'IN_PREPARATION' | 'READY' | 'DELIVERED';
+  }>;
 };
 
 export type InventoryItem = {
@@ -270,6 +281,7 @@ export type MenuCategory = {
   parentId?: number | null;
   name: string;
   color?: string;
+  showInPos?: boolean | null;
   station: 'KITCHEN' | 'BAR' | 'PASTRY';
 };
 
@@ -319,6 +331,25 @@ export type CashMovement = {
   amount: number;
   method: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
   createdAt: string;
+  orderCode?: string;
+  customerName?: string;
+  tableCode?: string;
+  paymentReference?: string | null;
+  orderTotal?: number;
+  orderPaidAmount?: number;
+  orderPendingAmount?: number;
+  orderItems?: Array<{
+    quantity: number;
+    product: string;
+    notes?: string;
+    lineTotal?: number | null;
+  }>;
+  orderPayments?: Array<{
+    method: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
+    amount: number;
+    reference?: string | null;
+    createdAt: string;
+  }>;
 };
 
 export type CashShiftSummary = {

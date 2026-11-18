@@ -1,8 +1,10 @@
-import { ArrowLeftRight, Beef, CakeSlice, Check, ChefHat, Coffee, CreditCard, Fish, GlassWater, IceCreamCone, LayoutDashboard, LogOut, Martini, Pizza, ReceiptText, Salad, Sandwich, SendHorizontal, UserRound, UtensilsCrossed, X } from 'lucide-react';
+import { ArrowLeftRight, Beef, CakeSlice, Check, ChefHat, Coffee, CreditCard, Fish, GlassWater, IceCreamCone, LayoutDashboard, LogOut, Martini, Pencil, Pizza, ReceiptText, Salad, Sandwich, SendHorizontal, UserRound, UtensilsCrossed, WalletCards, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon, type IconComponent } from '@/components/AppIcon';
-import { createOrUpdateOrder, moveTableAccount } from '@/services/api';
+import { StatusBadge } from '@/components/StatusBadge';
+import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
+import { createOrUpdateOrder, moveTableAccount, requestOrderBill } from '@/services/api';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import type { MenuCategory } from '@/types/restaurant';
@@ -23,6 +25,10 @@ function normalizeLabel(value?: string | null) {
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase();
+}
+
+function getAccentBorderColor(category: MenuCategory | null | undefined, fallback: string) {
+  return category?.color ?? fallback;
 }
 
 function inferSectionFromName(name?: string | null): MenuSection | null {
@@ -86,6 +92,7 @@ export default function PosMenuPage() {
   const customerPhone = usePosWizardStore((state) => state.customerPhone);
   const cart = usePosWizardStore((state) => state.cart);
   const addToCart = usePosWizardStore((state) => state.addToCart);
+  const updateLine = usePosWizardStore((state) => state.updateLine);
   const incrementLine = usePosWizardStore((state) => state.incrementLine);
   const decrementLine = usePosWizardStore((state) => state.decrementLine);
   const removeLine = usePosWizardStore((state) => state.removeLine);
@@ -99,12 +106,14 @@ export default function PosMenuPage() {
   const [error, setError] = useState<string | null>(null);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [modalProductId, setModalProductId] = useState<number | null>(null);
+  const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [modalNotes, setModalNotes] = useState('');
   const [modalSauces, setModalSauces] = useState<string[]>([]);
   const [modalDressings, setModalDressings] = useState<string[]>([]);
   const [modifierDialogSection, setModifierDialogSection] = useState<ModifierSection | null>(null);
   const [modifierDraftSelection, setModifierDraftSelection] = useState<string[]>([]);
   const [preBillOpen, setPreBillOpen] = useState(false);
+  const [requestingBill, setRequestingBill] = useState(false);
 
   const tables = snapshot?.tables ?? [];
   const menuCategories = snapshot?.menuCategories ?? [];
@@ -138,6 +147,44 @@ export default function PosMenuPage() {
     return new Map(menuCategories.map((category) => [category.id, resolveCategorySection(category)] as const));
   }, [categoryById, menuCategories]);
 
+  function resolveSectionRootCategory(category: MenuCategory | null | undefined): MenuCategory | null {
+    if (!category) {
+      return null;
+    }
+
+    let current: MenuCategory | null = category;
+    const seen = new Set<number>();
+
+    while (current?.parentId) {
+      if (seen.has(current.id)) {
+        break;
+      }
+      seen.add(current.id);
+      current = categoryById.get(current.parentId) ?? null;
+    }
+
+    return current;
+  }
+
+  function getSectionAccentColor(category: MenuCategory | null | undefined, fallback: string) {
+    let current = category;
+    const seen = new Set<number>();
+
+    while (current) {
+      if (current.color) {
+        return current.color;
+      }
+      if (!current.parentId || seen.has(current.id)) {
+        break;
+      }
+      seen.add(current.id);
+      current = categoryById.get(current.parentId) ?? null;
+    }
+
+    const rootCategory = resolveSectionRootCategory(category);
+    return rootCategory?.color ?? fallback;
+  }
+
   const categoryGroups = useMemo(() => {
     const groupOrder = (category: MenuCategory) => {
       const normalized = normalizeLabel(category.name);
@@ -150,17 +197,17 @@ export default function PosMenuPage() {
       if (normalized === 'productos' || normalized === 'producto') {
         return 2;
       }
-      if (normalized === 'extras' || normalized === 'extra') {
+      if (normalized === 'postres' || normalized === 'postre') {
         return 3;
       }
-      if (normalized === 'postres' || normalized === 'postre') {
+      if (normalized === 'extras' || normalized === 'extra') {
         return 4;
       }
       return 5;
     };
 
     return menuCategories
-      .filter((category) => !category.parentId && !['SAUCES', 'DRESSINGS'].includes(categorySectionById.get(category.id) ?? 'DISHES'))
+      .filter((category) => !category.parentId && isMenuSectionVisibleInPos(category))
       .slice()
       .sort((a, b) => {
         const orderDiff = groupOrder(a) - groupOrder(b);
@@ -203,6 +250,7 @@ export default function PosMenuPage() {
     return activeOrders.find((order) => order.tableCode === selectedTable.code) ?? null;
   }, [activeOrders, selectedTable]);
   const canCharge = Boolean(user?.permissions?.includes('CASH_MANAGE'));
+  const canRequestBill = Boolean(activeOrder && activeOrder.status === 'SERVED' && !activeOrder.readyForPayment && activeOrder.pendingAmount > 0);
 
   const preBillItems = useMemo(() => {
     if (!activeOrder) {
@@ -318,6 +366,23 @@ export default function PosMenuPage() {
     printWindow.document.write(html);
     printWindow.document.close();
     printWindow.focus();
+  }
+
+  async function handleRequestBill() {
+    if (!activeOrder) {
+      return;
+    }
+
+    setRequestingBill(true);
+    setError(null);
+    try {
+      await requestOrderBill(activeOrder.id);
+      await refreshSnapshot();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible solicitar cuenta.');
+    } finally {
+      setRequestingBill(false);
+    }
   }
 
   const selectedCategory = useMemo(() => {
@@ -604,11 +669,13 @@ export default function PosMenuPage() {
     [modalProduct, modalProductCategory, modalProductSection],
   );
 
-  function openProductModal(productId: number) {
+  function openProductModal(productId: number, lineId?: string | null) {
+    const existingLine = lineId ? cart[lineId] ?? null : null;
     setModalProductId(productId);
-    setModalNotes('');
-    setModalSauces([]);
-    setModalDressings([]);
+    setEditingLineId(existingLine?.id ?? null);
+    setModalNotes(existingLine?.notes ?? '');
+    setModalSauces(existingLine?.sauces ?? []);
+    setModalDressings(existingLine?.dressings ?? []);
     setModifierDialogSection(null);
     setModifierDraftSelection([]);
     setProductModalOpen(true);
@@ -617,6 +684,7 @@ export default function PosMenuPage() {
   function closeProductModal() {
     setProductModalOpen(false);
     setModalProductId(null);
+    setEditingLineId(null);
     setModalNotes('');
     setModalSauces([]);
     setModalDressings([]);
@@ -662,12 +730,18 @@ export default function PosMenuPage() {
       return;
     }
 
-    addToCart({
+    const payload = {
       productId: modalProductId,
       notes: modalNotes,
       sauces: modalProductAllowsModifiers ? modalSauces : [],
       dressings: modalProductAllowsModifiers ? modalDressings : [],
-    });
+    };
+
+    if (editingLineId) {
+      updateLine(editingLineId, payload);
+    } else {
+      addToCart(payload);
+    }
     closeProductModal();
   }
 
@@ -747,9 +821,13 @@ export default function PosMenuPage() {
                     ? 'border-amber-300/40 bg-amber-300/10 text-amber-950 dark:text-white'
                     : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
                 }`}
+                style={activeGroup?.id === group.id ? { borderColor: getSectionAccentColor(group, '#f59e0b') } : undefined}
               >
                 <span className="flex items-center gap-2.5">
-                  <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeGroup?.id === group.id ? 'border-amber-300/20 bg-amber-300/10 text-amber-700 dark:text-amber-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}>
+                  <span
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeGroup?.id === group.id ? 'border-amber-300/20 bg-amber-300/10 text-amber-700 dark:text-amber-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
+                    style={activeGroup?.id === group.id ? { borderColor: getSectionAccentColor(group, '#f59e0b'), color: getSectionAccentColor(group, '#f59e0b') } : undefined}
+                  >
                     <AppIcon icon={getCategoryIcon(group)} className="h-4 w-4" />
                   </span>
                   <span>{group.name}</span>
@@ -757,6 +835,15 @@ export default function PosMenuPage() {
               </button>
             ))}
           </div>
+
+          {activeGroup ? (
+            <div className="mt-5 flex items-center gap-3">
+              <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-zinc-500">
+                Categorias de {activeGroup.name}
+              </span>
+              <div className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
             {subcategories.map((category) => (
@@ -772,9 +859,13 @@ export default function PosMenuPage() {
                     ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-950 dark:text-white'
                     : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
                 }`}
+                style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981') } : undefined}
               >
                 <span className="flex items-center gap-2.5">
-                  <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${selectedCategory?.id === category.id ? 'border-emerald-300/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}>
+                  <span
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${selectedCategory?.id === category.id ? 'border-emerald-300/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
+                    style={selectedCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#10b981'), color: getSectionAccentColor(category, '#10b981') } : undefined}
+                  >
                     <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
                   </span>
                   <span>{category.name}</span>
@@ -784,27 +875,39 @@ export default function PosMenuPage() {
           </div>
 
           {leafCategories.length ? (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {leafCategories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  onClick={() => setSelectedLeafCategoryId(category.id)}
-                  className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
-                    activeLeafCategory?.id === category.id
-                      ? 'border-sky-300/40 bg-sky-500/10 text-sky-950 dark:text-white'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
-                  }`}
-                >
-                  <span className="flex items-center gap-2.5">
-                    <span className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeLeafCategory?.id === category.id ? 'border-sky-300/20 bg-sky-500/10 text-sky-700 dark:text-sky-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}>
-                      <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
+            <>
+              <div className="mt-5 flex items-center gap-3">
+                <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-zinc-500">
+                  Subcategorias de {selectedCategory?.name ?? activeGroup?.name ?? 'la seccion'}
+                </span>
+                <div className="h-px flex-1 bg-slate-200 dark:bg-white/10" />
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {leafCategories.map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => setSelectedLeafCategoryId(category.id)}
+                    className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
+                      activeLeafCategory?.id === category.id
+                        ? 'border-sky-300/40 bg-sky-500/10 text-sky-950 dark:text-white'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
+                    }`}
+                    style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9') } : undefined}
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <span
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border ${activeLeafCategory?.id === category.id ? 'border-sky-300/20 bg-sky-500/10 text-sky-700 dark:text-sky-200' : 'border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-black/20 dark:text-zinc-300'}`}
+                        style={activeLeafCategory?.id === category.id ? { borderColor: getSectionAccentColor(category, '#0ea5e9'), color: getSectionAccentColor(category, '#0ea5e9') } : undefined}
+                      >
+                        <AppIcon icon={getCategoryIcon(category)} className="h-4 w-4" />
+                      </span>
+                      <span>{category.name}</span>
                     </span>
-                    <span>{category.name}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
+                  </button>
+                ))}
+              </div>
+            </>
           ) : null}
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -849,10 +952,16 @@ export default function PosMenuPage() {
                   {currencySymbol} {(activeOrder?.total ?? 0).toFixed(2)}
                 </span>
               </p>
+              {activeOrder?.readyForPayment ? (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-slate-500 dark:text-zinc-400">Cobro</span>
+                  <StatusBadge value="BILL_REQUESTED" />
+                </div>
+              ) : null}
             </div>
 
             {activeOrder ? (
-              <div className={`mt-4 grid gap-2 ${canCharge ? 'sm:grid-cols-2' : ''}`}>
+              <div className={`mt-4 grid gap-2 ${(canRequestBill || (canCharge && activeOrder.readyForPayment)) ? 'sm:grid-cols-2' : ''}`}>
                 <button
                   type="button"
                   onClick={() => setPreBillOpen(true)}
@@ -861,10 +970,21 @@ export default function PosMenuPage() {
                   <AppIcon icon={ReceiptText} className="h-4 w-4" />
                   Precuenta
                 </button>
-                {canCharge ? (
+                {canRequestBill ? (
                   <button
                     type="button"
-                    onClick={() => navigate('/caja')}
+                    onClick={() => void handleRequestBill()}
+                    disabled={requestingBill}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-violet-300/30 bg-violet-500/10 px-4 text-sm font-semibold text-violet-900 transition hover:bg-violet-500/15 disabled:opacity-50 dark:text-white sm:h-12 sm:text-base lg:h-14 lg:text-lg"
+                  >
+                    <AppIcon icon={WalletCards} className="h-4 w-4" />
+                    {requestingBill ? 'Solicitando...' : 'Solicitar cuenta'}
+                  </button>
+                ) : null}
+                {canCharge && activeOrder.readyForPayment && selectedTable ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/cashier/cobrar/${selectedTable.id}`)}
                     className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-500/15 dark:text-white sm:h-12 sm:text-base lg:h-14 lg:text-lg"
                   >
                     <AppIcon icon={CreditCard} className="h-4 w-4" />
@@ -872,6 +992,14 @@ export default function PosMenuPage() {
                   </button>
                 ) : null}
               </div>
+            ) : null}
+
+            {activeOrder && !activeOrder.readyForPayment ? (
+              <p className="mt-3 text-xs text-slate-500 dark:text-zinc-500">
+                {activeOrder.status === 'SERVED'
+                  ? 'Cuando el cliente pida la cuenta, usa "Solicitar cuenta" para habilitar caja.'
+                  : 'Caja se habilita después de entregar el pedido y solicitar la cuenta.'}
+              </p>
             ) : null}
 
             {activeOrder ? (
@@ -941,6 +1069,14 @@ export default function PosMenuPage() {
                         <div className="min-w-[76px] text-right text-xs font-semibold text-slate-600 dark:text-zinc-300">
                           {formatMoney(lineTotal)}
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => openProductModal(product.id, line.id)}
+                          className="h-10 w-10 rounded-xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-100 dark:border-white/10 dark:bg-black/20 dark:text-white dark:hover:bg-white/[0.06] sm:h-11 sm:w-11"
+                          title="Editar detalle"
+                        >
+                          <AppIcon icon={Pencil} className="mx-auto h-4 w-4" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => decrementLine(line.id)}
@@ -1033,6 +1169,9 @@ export default function PosMenuPage() {
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Detalle del item</p>
                 <h2 className="mt-2 truncate font-display text-2xl text-slate-950 dark:text-white sm:text-3xl">{modalProduct?.name ?? 'Producto'}</h2>
+                <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
+                  {editingLineId ? 'Modifica el detalle para confirmar otra vez cómo lo quiere el cliente.' : 'Captura cómo lo quiere el cliente antes de agregarlo al pedido.'}
+                </p>
               </div>
               <button
                 type="button"
@@ -1135,7 +1274,7 @@ export default function PosMenuPage() {
                 onClick={confirmAddProduct}
                 className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base lg:h-16 lg:text-lg"
               >
-                Agregar
+                {editingLineId ? 'Guardar cambios' : 'Agregar'}
               </button>
             </div>
           </div>

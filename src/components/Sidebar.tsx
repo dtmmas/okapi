@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LayoutDashboard, ShoppingCart, UtensilsCrossed, ChefHat, Wallet, Boxes, Users, Bike, BarChart3, Settings, ShieldCheck, X, ChevronRight, ClipboardList, Store } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, UtensilsCrossed, ChefHat, Wallet, Boxes, Users, Bike, BarChart3, Settings, ShieldCheck, X, ChevronRight, ClipboardList, Store, MonitorSmartphone } from 'lucide-react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { AppIcon, type IconComponent } from '@/components/AppIcon';
+import { buildMenuSectionRoots } from '@/lib/menu-sections';
 import type { PermissionCode } from '@/types/restaurant';
+import type { MenuCategory } from '@/types/restaurant';
 import { cn } from '@/lib/utils';
 
 const items: Array<{
@@ -13,15 +15,25 @@ const items: Array<{
   children?: Array<{
     to: string;
     label: string;
-    queryKey?: 'view' | 'section';
-    queryValue?: 'guided' | 'catalog' | 'recipes' | 'subrecipes' | 'purchases' | 'audit' | 'sections' | 'dishes' | 'beverages' | 'products' | 'extras' | 'sauces' | 'dressings';
+    queryKey?: 'view' | 'section' | 'sectionId';
+    queryValue?: string;
   }>;
 }> = [
   { to: '/dashboard', label: 'Panel', icon: LayoutDashboard, permission: 'DASHBOARD_VIEW' },
   { to: '/pos', label: 'Punto de venta', icon: ShoppingCart, permission: 'POS_USE' },
+  { to: '/kiosk', label: 'Kiosko', icon: MonitorSmartphone, permission: 'POS_USE' },
   { to: '/mesas', label: 'Mesas', icon: UtensilsCrossed, permission: 'TABLES_MANAGE' },
   { to: '/comandas', label: 'Comandas', icon: ChefHat, permission: 'KITCHEN_UPDATE' },
-  { to: '/caja', label: 'Caja', icon: Wallet, permission: 'CASH_MANAGE' },
+  {
+    to: '/caja',
+    label: 'Caja',
+    icon: Wallet,
+    permission: 'CASH_MANAGE',
+    children: [
+      { to: '/caja/detalle', label: 'Detalle de caja' },
+      { to: '/caja/movimientos', label: 'Movimientos' },
+    ],
+  },
   {
     to: '/menu',
     label: 'Menú',
@@ -29,12 +41,6 @@ const items: Array<{
     permission: 'INVENTORY_MANAGE',
     children: [
       { to: '/menu?view=sections', label: 'Gestión de secciones', queryKey: 'view', queryValue: 'sections' },
-      { to: '/menu?section=dishes', label: 'Platillos', queryKey: 'section', queryValue: 'dishes' },
-      { to: '/menu?section=beverages', label: 'Bebidas', queryKey: 'section', queryValue: 'beverages' },
-      { to: '/menu?section=products', label: 'Productos', queryKey: 'section', queryValue: 'products' },
-      { to: '/menu?section=extras', label: 'Extras', queryKey: 'section', queryValue: 'extras' },
-      { to: '/menu?section=sauces', label: 'Salsas', queryKey: 'section', queryValue: 'sauces' },
-      { to: '/menu?section=dressings', label: 'Aderezos', queryKey: 'section', queryValue: 'dressings' },
     ],
   },
   {
@@ -64,28 +70,47 @@ type SidebarProps = {
   permissions: PermissionCode[];
   brandName: string;
   logoData?: string | null;
+  menuCategories: MenuCategory[];
   mobileOpen?: boolean;
   onClose?: () => void;
 };
 
-export function Sidebar({ permissions, brandName, logoData, mobileOpen = false, onClose }: SidebarProps) {
+export function Sidebar({ permissions, brandName, logoData, menuCategories, mobileOpen = false, onClose }: SidebarProps) {
   const location = useLocation();
-  const navItems = useMemo(
-    () => items.filter((item) => !item.permission || permissions.includes(item.permission)),
-    [permissions],
-  );
+  const navItems = useMemo(() => {
+    const menuSectionChildren = buildMenuSectionRoots(menuCategories).map((section) => ({
+      to: `/menu?sectionId=${section.id}`,
+      label: section.name,
+      queryKey: 'sectionId' as const,
+      queryValue: String(section.id),
+    }));
+
+    return items
+      .filter((item) => !item.permission || permissions.includes(item.permission))
+      .map((item) =>
+        item.to === '/menu'
+          ? {
+              ...item,
+              children: [item.children?.[0], ...menuSectionChildren].filter(Boolean) as NonNullable<typeof item.children>,
+            }
+          : item,
+      );
+  }, [menuCategories, permissions]);
   const searchParams = new URLSearchParams(location.search);
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
-  function hasActiveChild(
-    item: (typeof items)[number],
-  ) {
-    if (!item.children?.length || location.pathname !== item.to) return false;
+  function isChildActive(item: (typeof items)[number], child: NonNullable<(typeof items)[number]['children']>[number]) {
+    if (child.queryKey) {
+      return location.pathname === item.to && searchParams.get(child.queryKey) === (child.queryValue ?? '');
+    }
 
-    return item.children.some((child) => {
-      if (!child.queryKey) return false;
-      return searchParams.get(child.queryKey) === (child.queryValue ?? '');
-    });
+    return location.pathname === child.to;
+  }
+
+  function hasActiveChild(item: (typeof items)[number]) {
+    if (!item.children?.length) return false;
+
+    return item.children.some((child) => isChildActive(item, child));
   }
 
   useEffect(() => {
@@ -185,9 +210,7 @@ export function Sidebar({ permissions, brandName, logoData, mobileOpen = false, 
                     <div className="space-y-1 pb-1">
                     {item.children?.map((child) => {
                       const childActive =
-                        location.pathname === item.to &&
-                        child.queryKey &&
-                        searchParams.get(child.queryKey) === (child.queryValue ?? '');
+                        isChildActive(item, child);
                       return (
                         <Link
                           key={child.to}

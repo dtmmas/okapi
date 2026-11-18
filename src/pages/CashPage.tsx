@@ -1,14 +1,61 @@
 import { ArrowDownCircle, ArrowUpCircle, CreditCard, Receipt, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { Printer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { Panel } from '@/components/Panel';
 import { StatusBadge } from '@/components/StatusBadge';
 import { closeAdminCashShift, closeCashShift, createCashMovement, listAdminCashShifts, openCashShift } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
-import type { CashShiftControlItem } from '@/types/restaurant';
+import type { CashMovement, CashShiftControlItem } from '@/types/restaurant';
 
-export default function CashPage() {
+type CashPageProps = {
+  view?: 'overview' | 'movements';
+};
+
+type GroupedSaleMovement = {
+  orderCode: string;
+  customerName?: string;
+  tableCode?: string;
+  totalAmount: number;
+  latestCreatedAt: string;
+  payments: CashMovement[];
+  orderTotal?: number;
+  orderPaidAmount?: number;
+  orderPendingAmount?: number;
+  orderItems?: CashMovement['orderItems'];
+  orderPayments?: CashMovement['orderPayments'];
+};
+
+function formatMoney(amount: number, currencySymbol: string) {
+  return `${currencySymbol} ${amount.toFixed(2)}`;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function formatPaymentMethodLabel(method: CashMovement['method']) {
+  return method === 'CASH' ? 'EFECTIVO' : method === 'CARD' ? 'TARJETA' : method === 'TRANSFER' ? 'TRANSFERENCIA' : 'MIXTO';
+}
+
+function formatAuditDetail(movement: Pick<CashMovement, 'method' | 'paymentReference' | 'reference'>) {
+  if (movement.method === 'CARD') {
+    return movement.paymentReference ? `Referencia tarjeta: ${movement.paymentReference}` : 'Pago con tarjeta';
+  }
+
+  if (movement.method === 'TRANSFER') {
+    return movement.paymentReference ? `Referencia transferencia/deposito: ${movement.paymentReference}` : 'Transferencia o deposito';
+  }
+
+  if (movement.method === 'MIXED') {
+    return movement.paymentReference ? `Referencia mixta: ${movement.paymentReference}` : 'Pago mixto';
+  }
+
+  return movement.reference;
+}
+
+export default function CashPage({ view = 'overview' }: CashPageProps) {
   const navigate = useNavigate();
   const snapshot = useSessionStore((state) => state.snapshot);
   const user = useSessionStore((state) => state.user);
@@ -35,8 +82,13 @@ export default function CashPage() {
   const [adminOpenOnly, setAdminOpenOnly] = useState(false);
   const [adminDateFrom, setAdminDateFrom] = useState('');
   const [adminDateTo, setAdminDateTo] = useState('');
+  const [expandedPaymentsByOrder, setExpandedPaymentsByOrder] = useState<Record<string, boolean>>({});
+  const [detailDialogOrderCode, setDetailDialogOrderCode] = useState<string | null>(null);
+  const [printDialogOrderCode, setPrintDialogOrderCode] = useState<string | null>(null);
   const currencySymbol = snapshot?.brand.currencySymbol ?? 'Q';
   const canManageCashiers = user?.role === 'ADMIN' || user?.role === 'SUPERVISOR';
+  const isOverviewView = view === 'overview';
+  const isMovementsView = view === 'movements';
 
   async function loadAdminCashShifts() {
     if (!canManageCashiers) {
@@ -123,12 +175,243 @@ export default function CashPage() {
     };
   }, [adminCashShifts]);
 
+  const groupedMovements = useMemo(() => {
+    const salesByOrder = new Map<string, GroupedSaleMovement>();
+    const standaloneMovements: CashMovement[] = [];
+
+    for (const movement of movements) {
+      if (movement.type === 'SALE' && movement.orderCode) {
+        const current = salesByOrder.get(movement.orderCode);
+        if (current) {
+          current.totalAmount += movement.amount;
+          current.latestCreatedAt = current.latestCreatedAt.localeCompare(movement.createdAt) > 0 ? current.latestCreatedAt : movement.createdAt;
+          current.payments.push(movement);
+          continue;
+        }
+
+        salesByOrder.set(movement.orderCode, {
+          orderCode: movement.orderCode,
+          customerName: movement.customerName,
+          tableCode: movement.tableCode,
+          totalAmount: movement.amount,
+          latestCreatedAt: movement.createdAt,
+          payments: [movement],
+          orderTotal: movement.orderTotal,
+          orderPaidAmount: movement.orderPaidAmount,
+          orderPendingAmount: movement.orderPendingAmount,
+          orderItems: movement.orderItems,
+          orderPayments: movement.orderPayments,
+        });
+        continue;
+      }
+
+      standaloneMovements.push(movement);
+    }
+
+    return {
+      salesGroups: [...salesByOrder.values()]
+        .map((group) => ({
+          ...group,
+          payments: [...group.payments].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+        }))
+        .sort((left, right) => right.latestCreatedAt.localeCompare(left.latestCreatedAt)),
+      standaloneMovements,
+    };
+  }, [movements]);
+
+  const selectedPrintGroup = useMemo(
+    () => groupedMovements.salesGroups.find((group) => group.orderCode === printDialogOrderCode) ?? null,
+    [groupedMovements.salesGroups, printDialogOrderCode],
+  );
+  const selectedDetailGroup = useMemo(
+    () => groupedMovements.salesGroups.find((group) => group.orderCode === detailDialogOrderCode) ?? null,
+    [groupedMovements.salesGroups, detailDialogOrderCode],
+  );
+
   function formatDateTime(value: string | null) {
     if (!value) {
       return 'Pendiente';
     }
 
     return new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+  }
+
+  function togglePaymentsVisibility(orderCode: string) {
+    setExpandedPaymentsByOrder((current) => ({
+      ...current,
+      [orderCode]: !current[orderCode],
+    }));
+  }
+
+  function openPrintWindow() {
+    const printWindow = window.open('', '_blank', 'width=420,height=700');
+    if (!printWindow) {
+      return null;
+    }
+    try {
+      printWindow.opener = null;
+    } catch {
+    }
+    return printWindow;
+  }
+
+  function renderPrintWindow(printWindow: Window, html: string) {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+  }
+
+  function buildGroupedAccountReceiptHtml(group: GroupedSaleMovement) {
+    const brandName = snapshot?.brand?.name ?? 'Restaurante';
+    const now = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
+    const itemsHtml =
+      group.orderItems?.map((item) => {
+        const notes = item.notes ? `<div class="note">${escapeHtml(item.notes)}</div>` : '';
+        return `<div class="row"><div class="left">${item.quantity} x ${escapeHtml(item.product)}${notes}</div><div class="right">${
+          item.lineTotal !== null && item.lineTotal !== undefined ? escapeHtml(formatMoney(item.lineTotal, currencySymbol)) : ''
+        }</div></div>`;
+      }).join('') ?? '<div class="meta">Sin detalle disponible.</div>';
+    const paymentsHtml =
+      group.orderPayments?.length
+        ? group.orderPayments
+            .map((payment) => {
+              const paymentDate = new Intl.DateTimeFormat('es-GT', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(payment.createdAt));
+              const reference = payment.reference ? `<br/><strong>Ref:</strong> ${escapeHtml(payment.reference)}` : '';
+              return `<div class="meta"><strong>${formatPaymentMethodLabel(payment.method)}</strong> ${escapeHtml(
+                formatMoney(payment.amount, currencySymbol),
+              )}<br/>${escapeHtml(paymentDate)}${reference}</div>`;
+            })
+            .join('')
+        : '<div class="meta">Sin abonos registrados.</div>';
+
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>REIMPRESION DE CUENTA</title>
+    <style>
+      * { box-sizing: border-box; }
+      @page { size: 80mm auto; margin: 0; }
+      body { margin: 0; background: #fff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: #111; }
+      .ticket { width: 80mm; padding: 3mm 3mm 2mm; margin: 0; }
+      .center { text-align: center; }
+      .title { font-weight: 900; font-size: 18px; letter-spacing: 0.08em; }
+      .subtitle { font-weight: 900; font-size: 14px; margin-top: 4px; }
+      .meta { font-size: 12px; margin-top: 8px; font-weight: 800; }
+      .divider { border-top: 2px dashed #222; margin: 8px 0; }
+      .row { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; font-size: 13px; padding: 6px 0; }
+      .left { flex: 1 1 auto; min-width: 0; font-weight: 800; }
+      .right { flex: 0 0 40%; max-width: 40%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 900; }
+      .note { font-weight: 700; font-size: 12px; opacity: 0.88; margin-top: 2px; white-space: pre-wrap; }
+      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
+    </style>
+  </head>
+  <body>
+    <div class="ticket">
+      <div class="center">
+        <div class="subtitle">${escapeHtml(brandName)}</div>
+        <div class="title">REIMPRESION DE CUENTA</div>
+        <div class="meta">${escapeHtml(now)}</div>
+      </div>
+      <div class="divider"></div>
+      <div class="meta"><strong>Cuenta:</strong> ${escapeHtml(group.orderCode)}<br/><strong>Mesa:</strong> ${escapeHtml(
+        group.tableCode ?? '-',
+      )}<br/><strong>Cliente:</strong> ${escapeHtml(group.customerName ?? 'Consumidor final')}</div>
+      <div class="divider"></div>
+      ${itemsHtml}
+      <div class="divider"></div>
+      <div class="row"><div class="left">TOTAL CUENTA</div><div class="right">${escapeHtml(formatMoney(group.orderTotal ?? group.totalAmount, currencySymbol))}</div></div>
+      <div class="row"><div class="left">TOTAL ABONADO</div><div class="right">${escapeHtml(formatMoney(group.orderPaidAmount ?? group.totalAmount, currencySymbol))}</div></div>
+      <div class="row"><div class="left">SALDO PENDIENTE</div><div class="right">${escapeHtml(formatMoney(group.orderPendingAmount ?? 0, currencySymbol))}</div></div>
+      <div class="divider"></div>
+      <div class="meta"><strong>ABONOS REGISTRADOS</strong></div>
+      ${paymentsHtml}
+      <div class="footer">DOCUMENTO DE REIMPRESION</div>
+    </div>
+    <script>
+      window.onload = () => { window.print(); };
+      window.onafterprint = () => { window.close(); };
+    </script>
+  </body>
+</html>`;
+  }
+
+  function buildGroupedPaymentReceiptHtml(group: GroupedSaleMovement, payment: NonNullable<GroupedSaleMovement['orderPayments']>[number], paymentIndex: number) {
+    const brandName = snapshot?.brand?.name ?? 'Restaurante';
+    const now = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
+    const paymentDate = new Intl.DateTimeFormat('es-GT', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(payment.createdAt));
+
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>REIMPRESION DE ABONO</title>
+    <style>
+      * { box-sizing: border-box; }
+      @page { size: 80mm auto; margin: 0; }
+      body { margin: 0; background: #fff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: #111; }
+      .ticket { width: 80mm; padding: 3mm 3mm 2mm; margin: 0; }
+      .center { text-align: center; }
+      .title { font-weight: 900; font-size: 18px; letter-spacing: 0.08em; }
+      .subtitle { font-weight: 900; font-size: 14px; margin-top: 4px; }
+      .meta { font-size: 12px; margin-top: 8px; font-weight: 800; }
+      .divider { border-top: 2px dashed #222; margin: 8px 0; }
+      .row { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+      .left { flex: 1 1 auto; min-width: 0; font-weight: 800; }
+      .right { flex: 0 0 40%; max-width: 40%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 900; }
+      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
+    </style>
+  </head>
+  <body>
+    <div class="ticket">
+      <div class="center">
+        <div class="subtitle">${escapeHtml(brandName)}</div>
+        <div class="title">REIMPRESION DE ABONO ${paymentIndex + 1}</div>
+        <div class="meta">${escapeHtml(now)}</div>
+      </div>
+      <div class="divider"></div>
+      <div class="meta"><strong>Cuenta:</strong> ${escapeHtml(group.orderCode)}<br/><strong>Mesa:</strong> ${escapeHtml(
+        group.tableCode ?? '-',
+      )}<br/><strong>Cliente:</strong> ${escapeHtml(group.customerName ?? 'Consumidor final')}</div>
+      <div class="divider"></div>
+      <div class="meta"><strong>Metodo:</strong> ${escapeHtml(formatPaymentMethodLabel(payment.method))}<br/><strong>Fecha:</strong> ${escapeHtml(
+        paymentDate,
+      )}<br/><strong>Monto:</strong> ${escapeHtml(formatMoney(payment.amount, currencySymbol))}${
+        payment.reference ? `<br/><strong>Ref:</strong> ${escapeHtml(payment.reference)}` : ''
+      }</div>
+      <div class="divider"></div>
+      <div class="row"><div class="left">TOTAL CUENTA</div><div class="right">${escapeHtml(formatMoney(group.orderTotal ?? group.totalAmount, currencySymbol))}</div></div>
+      <div class="row"><div class="left">TOTAL ABONADO</div><div class="right">${escapeHtml(formatMoney(group.orderPaidAmount ?? group.totalAmount, currencySymbol))}</div></div>
+      <div class="row"><div class="left">SALDO PENDIENTE</div><div class="right">${escapeHtml(formatMoney(group.orderPendingAmount ?? 0, currencySymbol))}</div></div>
+      <div class="footer">DOCUMENTO DE REIMPRESION</div>
+    </div>
+    <script>
+      window.onload = () => { window.print(); };
+      window.onafterprint = () => { window.close(); };
+    </script>
+  </body>
+</html>`;
+  }
+
+  function handleReprintGroupedAccount(group: GroupedSaleMovement) {
+    const printWindow = openPrintWindow();
+    if (!printWindow) {
+      return;
+    }
+    renderPrintWindow(printWindow, buildGroupedAccountReceiptHtml(group));
+  }
+
+  function handleReprintGroupedPayment(group: GroupedSaleMovement, paymentIndex: number) {
+    const payment = group.orderPayments?.[paymentIndex];
+    if (!payment) {
+      return;
+    }
+    const printWindow = openPrintWindow();
+    if (!printWindow) {
+      return;
+    }
+    renderPrintWindow(printWindow, buildGroupedPaymentReceiptHtml(group, payment, paymentIndex));
   }
 
   async function handleOpenShift() {
@@ -217,10 +500,10 @@ export default function CashPage() {
 
   return (
     <>
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+      {isOverviewView ? (
         <Panel
-          title="Resumen de caja"
-          subtitle={`Arqueo y movimientos del turno actual${user?.name ? ` • Cajero: ${user.name}` : ''}`}
+          title="Detalle de caja"
+          subtitle={`Caja y arqueo del turno actual${user?.name ? ` • Cajero: ${user.name}` : ''}`}
           action={
             cashShift?.isOpen ? (
               <button
@@ -343,14 +626,111 @@ export default function CashPage() {
             )}
           </div>
         </Panel>
+      ) : null}
 
-        <Panel title="Movimientos" subtitle="Trazabilidad por referencia y método de pago">
+      {isMovementsView ? (
+        <Panel
+          title="Movimientos"
+          subtitle="Cuentas agrupadas con sus abonos y movimientos manuales separados"
+          action={
+            cashShift?.isOpen ? (
+              <button
+                type="button"
+                onClick={() => navigate('/cashier/mesas')}
+                className="inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white"
+              >
+                <AppIcon icon={CreditCard} className="h-4 w-4" />
+                Ir a mesas y cobros
+              </button>
+            ) : null
+          }
+        >
           <div className="space-y-4">
-            {movements.map((movement) => (
+            {groupedMovements.salesGroups.map((group) => (
+              <article
+                key={group.orderCode}
+                className="rounded-[24px] border border-emerald-300/35 bg-white p-4 shadow-sm dark:border-emerald-400/20 dark:bg-zinc-950/45 dark:shadow-none"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="font-semibold text-slate-950 dark:text-white">{group.orderCode}</p>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">
+                      {group.tableCode ? `Mesa ${group.tableCode}` : group.customerName ?? 'Consumidor final'}
+                      {group.tableCode && group.customerName ? ` • ${group.customerName}` : ''}
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">
+                      {group.payments.length} abono(s) registrado(s)
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <StatusBadge value="SALE" />
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                      {currencySymbol} {group.totalAmount.toFixed(2)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">Ultimo abono: {group.latestCreatedAt}</p>
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => togglePaymentsVisibility(group.orderCode)}
+                        className="inline-flex h-10 items-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-500/15 dark:text-emerald-100"
+                      >
+                        {expandedPaymentsByOrder[group.orderCode] ? 'Contraer abonos' : `Desplegar abonos (${group.payments.length})`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDetailDialogOrderCode(group.orderCode)}
+                        className="inline-flex h-10 items-center gap-2 rounded-2xl border border-sky-300/30 bg-sky-500/10 px-3 text-xs font-semibold text-sky-900 transition hover:bg-sky-500/15 dark:text-sky-100"
+                      >
+                        Ver detalle
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPrintDialogOrderCode(group.orderCode)}
+                        className="inline-flex h-10 items-center gap-2 rounded-2xl border border-violet-300/30 bg-violet-500/10 px-3 text-xs font-semibold text-violet-900 transition hover:bg-violet-500/15 dark:text-violet-100"
+                      >
+                        <AppIcon icon={Printer} className="h-4 w-4" />
+                        Reimpresion
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {expandedPaymentsByOrder[group.orderCode] ? (
+                  <div className="mt-4 space-y-2">
+                    {group.payments.map((payment) => (
+                      <div
+                        key={payment.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/70 bg-slate-50 px-4 py-3 dark:border-white/8 dark:bg-black/20"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white">{payment.createdAt}</p>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{formatAuditDetail(payment)}</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <StatusBadge value={payment.method} />
+                          </div>
+                          <p className="mt-2 text-sm text-slate-700 dark:text-zinc-200">
+                            {currencySymbol} {payment.amount.toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+
+            {groupedMovements.standaloneMovements.map((movement) => (
               <article key={movement.id} className="flex items-center justify-between gap-4 rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45 dark:shadow-none">
                 <div>
                   <p className="font-semibold text-slate-950 dark:text-white">{movement.reference}</p>
                   <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">{movement.createdAt}</p>
+                  {(movement.method === 'CARD' || movement.method === 'TRANSFER' || movement.method === 'MIXED') && movement.paymentReference ? (
+                    <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{formatAuditDetail(movement)}</p>
+                  ) : null}
                 </div>
                 <div className="text-right">
                   <div className="flex flex-wrap justify-end gap-2">
@@ -358,16 +738,16 @@ export default function CashPage() {
                     <StatusBadge value={movement.method} />
                   </div>
                   <p className="mt-2 text-sm text-slate-700 dark:text-zinc-200">
-                    {currencySymbol} {movement.amount}
+                    {currencySymbol} {movement.amount.toFixed(2)}
                   </p>
                 </div>
               </article>
             ))}
           </div>
         </Panel>
-      </div>
+      ) : null}
 
-      {canManageCashiers ? (
+      {canManageCashiers && isOverviewView ? (
         <Panel
           title="Control administrativo de cajas"
           subtitle="Supervisa aperturas y cierres de caja por responsable, y cierra una caja específica cuando el cajero no lo haga."
@@ -539,7 +919,7 @@ export default function CashPage() {
         </Panel>
       ) : null}
 
-      {movementDialogOpen ? (
+      {movementDialogOpen && isOverviewView ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm dark:bg-black/70">
           <div className="w-full max-w-xl rounded-[28px] border border-slate-200/80 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[#0b0b10] dark:shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
             <div className="flex items-start justify-between gap-4">
@@ -603,6 +983,172 @@ export default function CashPage() {
                   Cancelar
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedDetailGroup && isMovementsView ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm dark:bg-black/70">
+          <div className="w-full max-w-3xl rounded-[28px] border border-slate-200/80 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[#0b0b10] dark:shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">Detalle de venta</p>
+                <h3 className="mt-2 font-display text-2xl text-slate-950 dark:text-white">{selectedDetailGroup.orderCode}</h3>
+                <p className="mt-2 text-sm text-slate-500 dark:text-zinc-500">
+                  {selectedDetailGroup.tableCode ? `Mesa ${selectedDetailGroup.tableCode}` : selectedDetailGroup.customerName ?? 'Consumidor final'}
+                  {selectedDetailGroup.tableCode && selectedDetailGroup.customerName ? ` • ${selectedDetailGroup.customerName}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailDialogOrderCode(null)}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              <article className="rounded-[22px] border border-slate-200/80 bg-slate-50 p-4 dark:border-white/10 dark:bg-black/20">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">Total cuenta</p>
+                <p className="mt-3 text-xl font-semibold text-slate-950 dark:text-white">
+                  {currencySymbol} {(selectedDetailGroup.orderTotal ?? selectedDetailGroup.totalAmount).toFixed(2)}
+                </p>
+              </article>
+              <article className="rounded-[22px] border border-slate-200/80 bg-slate-50 p-4 dark:border-white/10 dark:bg-black/20">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">Total abonado</p>
+                <p className="mt-3 text-xl font-semibold text-slate-950 dark:text-white">
+                  {currencySymbol} {(selectedDetailGroup.orderPaidAmount ?? selectedDetailGroup.totalAmount).toFixed(2)}
+                </p>
+              </article>
+              <article className="rounded-[22px] border border-slate-200/80 bg-slate-50 p-4 dark:border-white/10 dark:bg-black/20">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">Saldo pendiente</p>
+                <p className="mt-3 text-xl font-semibold text-amber-700 dark:text-amber-300">
+                  {currencySymbol} {(selectedDetailGroup.orderPendingAmount ?? 0).toFixed(2)}
+                </p>
+              </article>
+            </div>
+
+            <div className="mt-5 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+              <section className="rounded-[24px] border border-slate-200/80 bg-slate-50 p-4 dark:border-white/10 dark:bg-black/20">
+                <p className="text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">Consumo</p>
+                <div className="mt-4 space-y-3">
+                  {selectedDetailGroup.orderItems?.length ? (
+                    selectedDetailGroup.orderItems.map((item, index) => (
+                      <div key={`${selectedDetailGroup.orderCode}-item-${index}`} className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-950 dark:text-white">
+                              {item.quantity} x {item.product}
+                            </p>
+                            {item.notes ? <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{item.notes}</p> : null}
+                          </div>
+                          <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                            {item.lineTotal !== null && item.lineTotal !== undefined ? `${currencySymbol} ${item.lineTotal.toFixed(2)}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-zinc-500">No hay detalle de productos disponible.</p>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-[24px] border border-slate-200/80 bg-slate-50 p-4 dark:border-white/10 dark:bg-black/20">
+                <p className="text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">Abonos registrados</p>
+                <div className="mt-4 space-y-3">
+                  {selectedDetailGroup.orderPayments?.length ? (
+                    selectedDetailGroup.orderPayments.map((payment, paymentIndex) => (
+                      <div key={`${selectedDetailGroup.orderCode}-payment-${paymentIndex}`} className="rounded-2xl border border-slate-200/80 bg-white px-4 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-950 dark:text-white">Abono {paymentIndex + 1}</p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">
+                              {formatPaymentMethodLabel(payment.method)} • {formatDateTime(payment.createdAt)}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">
+                              {payment.reference
+                                ? payment.method === 'TRANSFER'
+                                  ? `Referencia transferencia/deposito: ${payment.reference}`
+                                  : `Referencia: ${payment.reference}`
+                                : 'Sin referencia adicional'}
+                            </p>
+                          </div>
+                          <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                            {currencySymbol} {payment.amount.toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-slate-500 dark:text-zinc-500">No hay abonos registrados.</p>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedPrintGroup && isMovementsView ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 backdrop-blur-sm dark:bg-black/70">
+          <div className="w-full max-w-xl rounded-[28px] border border-slate-200/80 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[#0b0b10] dark:shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">Reimpresion</p>
+                <h3 className="mt-2 font-display text-2xl text-slate-950 dark:text-white">{selectedPrintGroup.orderCode}</h3>
+                <p className="mt-2 text-sm text-slate-500 dark:text-zinc-500">
+                  Selecciona si deseas imprimir la cuenta total o uno de los abonos registrados.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPrintDialogOrderCode(null)}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              <button
+                type="button"
+                onClick={() => {
+                  handleReprintGroupedAccount(selectedPrintGroup);
+                  setPrintDialogOrderCode(null);
+                }}
+                className="flex w-full items-center justify-between gap-3 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-4 text-left text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white"
+              >
+                <span>Cuenta total</span>
+                <span>{currencySymbol} {(selectedPrintGroup.orderTotal ?? selectedPrintGroup.totalAmount).toFixed(2)}</span>
+              </button>
+
+              {selectedPrintGroup.orderPayments?.map((payment, paymentIndex) => (
+                <button
+                  key={`${selectedPrintGroup.orderCode}-${paymentIndex}-${payment.createdAt}`}
+                  type="button"
+                  onClick={() => {
+                    handleReprintGroupedPayment(selectedPrintGroup, paymentIndex);
+                    setPrintDialogOrderCode(null);
+                  }}
+                  className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
+                >
+                  <div>
+                    <p>Abono {paymentIndex + 1}</p>
+                    <p className="mt-1 text-xs font-normal text-slate-500 dark:text-zinc-500">
+                      {formatPaymentMethodLabel(payment.method)} • {formatDateTime(payment.createdAt)}
+                    </p>
+                    {payment.reference ? (
+                      <p className="mt-1 text-xs font-normal text-slate-500 dark:text-zinc-500">
+                        {payment.method === 'TRANSFER' ? 'Ref. transferencia/deposito' : 'Ref. operacion'}: {payment.reference}
+                      </p>
+                    ) : null}
+                  </div>
+                  <span>{currencySymbol} {payment.amount.toFixed(2)}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
