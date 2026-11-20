@@ -3,10 +3,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Printer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { printReceipt } from '@/lib/printing/print-service';
 import { Panel } from '@/components/Panel';
 import { StatusBadge } from '@/components/StatusBadge';
 import { closeAdminCashShift, closeCashShift, createCashMovement, listAdminCashShifts, openCashShift } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
+import type { ReceiptDocument } from '@/types/printing';
 import type { CashMovement, CashShiftControlItem } from '@/types/restaurant';
 
 type CashPageProps = {
@@ -29,10 +31,6 @@ type GroupedSaleMovement = {
 
 function formatMoney(amount: number, currencySymbol: string) {
   return `${currencySymbol} ${amount.toFixed(2)}`;
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
 function formatPaymentMethodLabel(method: CashMovement['method']) {
@@ -243,175 +241,98 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
     }));
   }
 
-  function openPrintWindow() {
-    const printWindow = window.open('', '_blank', 'width=420,height=700');
-    if (!printWindow) {
-      return null;
-    }
-    try {
-      printWindow.opener = null;
-    } catch {
-    }
-    return printWindow;
-  }
-
-  function renderPrintWindow(printWindow: Window, html: string) {
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
-  }
-
-  function buildGroupedAccountReceiptHtml(group: GroupedSaleMovement) {
+  function buildGroupedAccountReceiptDocument(group: GroupedSaleMovement): ReceiptDocument {
     const brandName = snapshot?.brand?.name ?? 'Restaurante';
-    const now = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
-    const itemsHtml =
-      group.orderItems?.map((item) => {
-        const notes = item.notes ? `<div class="note">${escapeHtml(item.notes)}</div>` : '';
-        return `<div class="row"><div class="left">${item.quantity} x ${escapeHtml(item.product)}${notes}</div><div class="right">${
-          item.lineTotal !== null && item.lineTotal !== undefined ? escapeHtml(formatMoney(item.lineTotal, currencySymbol)) : ''
-        }</div></div>`;
-      }).join('') ?? '<div class="meta">Sin detalle disponible.</div>';
-    const paymentsHtml =
-      group.orderPayments?.length
-        ? group.orderPayments
-            .map((payment) => {
-              const paymentDate = new Intl.DateTimeFormat('es-GT', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(payment.createdAt));
-              const reference = payment.reference ? `<br/><strong>Ref:</strong> ${escapeHtml(payment.reference)}` : '';
-              return `<div class="meta"><strong>${formatPaymentMethodLabel(payment.method)}</strong> ${escapeHtml(
-                formatMoney(payment.amount, currencySymbol),
-              )}<br/>${escapeHtml(paymentDate)}${reference}</div>`;
-            })
-            .join('')
-        : '<div class="meta">Sin abonos registrados.</div>';
+    const printedAt = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
 
-    return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>REIMPRESION DE CUENTA</title>
-    <style>
-      * { box-sizing: border-box; }
-      @page { size: 80mm auto; margin: 0; }
-      body { margin: 0; background: #fff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: #111; }
-      .ticket { width: 80mm; padding: 3mm 3mm 2mm; margin: 0; }
-      .center { text-align: center; }
-      .title { font-weight: 900; font-size: 18px; letter-spacing: 0.08em; }
-      .subtitle { font-weight: 900; font-size: 14px; margin-top: 4px; }
-      .meta { font-size: 12px; margin-top: 8px; font-weight: 800; }
-      .divider { border-top: 2px dashed #222; margin: 8px 0; }
-      .row { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; font-size: 13px; padding: 6px 0; }
-      .left { flex: 1 1 auto; min-width: 0; font-weight: 800; }
-      .right { flex: 0 0 40%; max-width: 40%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 900; }
-      .note { font-weight: 700; font-size: 12px; opacity: 0.88; margin-top: 2px; white-space: pre-wrap; }
-      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
-    </style>
-  </head>
-  <body>
-    <div class="ticket">
-      <div class="center">
-        <div class="subtitle">${escapeHtml(brandName)}</div>
-        <div class="title">REIMPRESION DE CUENTA</div>
-        <div class="meta">${escapeHtml(now)}</div>
-      </div>
-      <div class="divider"></div>
-      <div class="meta"><strong>Cuenta:</strong> ${escapeHtml(group.orderCode)}<br/><strong>Mesa:</strong> ${escapeHtml(
-        group.tableCode ?? '-',
-      )}<br/><strong>Cliente:</strong> ${escapeHtml(group.customerName ?? 'Consumidor final')}</div>
-      <div class="divider"></div>
-      ${itemsHtml}
-      <div class="divider"></div>
-      <div class="row"><div class="left">TOTAL CUENTA</div><div class="right">${escapeHtml(formatMoney(group.orderTotal ?? group.totalAmount, currencySymbol))}</div></div>
-      <div class="row"><div class="left">TOTAL ABONADO</div><div class="right">${escapeHtml(formatMoney(group.orderPaidAmount ?? group.totalAmount, currencySymbol))}</div></div>
-      <div class="row"><div class="left">SALDO PENDIENTE</div><div class="right">${escapeHtml(formatMoney(group.orderPendingAmount ?? 0, currencySymbol))}</div></div>
-      <div class="divider"></div>
-      <div class="meta"><strong>ABONOS REGISTRADOS</strong></div>
-      ${paymentsHtml}
-      <div class="footer">DOCUMENTO DE REIMPRESION</div>
-    </div>
-    <script>
-      window.onload = () => { window.print(); };
-      window.onafterprint = () => { window.close(); };
-    </script>
-  </body>
-</html>`;
+    return {
+      title: 'REIMPRESION DE CUENTA',
+      brandName,
+      printedAt,
+      metadata: [
+        { label: 'Cuenta', value: group.orderCode },
+        { label: 'Mesa', value: group.tableCode ?? '-' },
+        { label: 'Cliente', value: group.customerName ?? 'Consumidor final' },
+      ],
+      items: group.orderItems?.map((item) => ({
+        left: `${item.quantity} x ${item.product}`,
+        right: item.lineTotal !== null && item.lineTotal !== undefined ? formatMoney(item.lineTotal, currencySymbol) : '',
+        note: item.notes,
+      })),
+      emptyItemsLabel: 'Sin detalle disponible.',
+      summary: [
+        { label: 'TOTAL CUENTA', value: formatMoney(group.orderTotal ?? group.totalAmount, currencySymbol) },
+        { label: 'TOTAL ABONADO', value: formatMoney(group.orderPaidAmount ?? group.totalAmount, currencySymbol) },
+        { label: 'SALDO PENDIENTE', value: formatMoney(group.orderPendingAmount ?? 0, currencySymbol) },
+      ],
+      sections: [
+        {
+          title: 'ABONOS REGISTRADOS',
+          entries:
+            group.orderPayments?.length
+              ? group.orderPayments.map((payment) => ({
+                  title: formatPaymentMethodLabel(payment.method),
+                  lines: [
+                    formatMoney(payment.amount, currencySymbol),
+                    new Intl.DateTimeFormat('es-GT', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(payment.createdAt)),
+                    ...(payment.reference ? [`Ref: ${payment.reference}`] : []),
+                  ],
+                }))
+              : [{ lines: ['Sin abonos registrados.'] }],
+        },
+      ],
+      footerLabel: 'DOCUMENTO DE REIMPRESION',
+    };
   }
 
-  function buildGroupedPaymentReceiptHtml(group: GroupedSaleMovement, payment: NonNullable<GroupedSaleMovement['orderPayments']>[number], paymentIndex: number) {
+  function buildGroupedPaymentReceiptDocument(group: GroupedSaleMovement, payment: NonNullable<GroupedSaleMovement['orderPayments']>[number], paymentIndex: number): ReceiptDocument {
     const brandName = snapshot?.brand?.name ?? 'Restaurante';
-    const now = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
+    const printedAt = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
     const paymentDate = new Intl.DateTimeFormat('es-GT', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(payment.createdAt));
 
-    return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>REIMPRESION DE ABONO</title>
-    <style>
-      * { box-sizing: border-box; }
-      @page { size: 80mm auto; margin: 0; }
-      body { margin: 0; background: #fff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: #111; }
-      .ticket { width: 80mm; padding: 3mm 3mm 2mm; margin: 0; }
-      .center { text-align: center; }
-      .title { font-weight: 900; font-size: 18px; letter-spacing: 0.08em; }
-      .subtitle { font-weight: 900; font-size: 14px; margin-top: 4px; }
-      .meta { font-size: 12px; margin-top: 8px; font-weight: 800; }
-      .divider { border-top: 2px dashed #222; margin: 8px 0; }
-      .row { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; font-size: 13px; padding: 4px 0; }
-      .left { flex: 1 1 auto; min-width: 0; font-weight: 800; }
-      .right { flex: 0 0 40%; max-width: 40%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 900; }
-      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
-    </style>
-  </head>
-  <body>
-    <div class="ticket">
-      <div class="center">
-        <div class="subtitle">${escapeHtml(brandName)}</div>
-        <div class="title">REIMPRESION DE ABONO ${paymentIndex + 1}</div>
-        <div class="meta">${escapeHtml(now)}</div>
-      </div>
-      <div class="divider"></div>
-      <div class="meta"><strong>Cuenta:</strong> ${escapeHtml(group.orderCode)}<br/><strong>Mesa:</strong> ${escapeHtml(
-        group.tableCode ?? '-',
-      )}<br/><strong>Cliente:</strong> ${escapeHtml(group.customerName ?? 'Consumidor final')}</div>
-      <div class="divider"></div>
-      <div class="meta"><strong>Metodo:</strong> ${escapeHtml(formatPaymentMethodLabel(payment.method))}<br/><strong>Fecha:</strong> ${escapeHtml(
-        paymentDate,
-      )}<br/><strong>Monto:</strong> ${escapeHtml(formatMoney(payment.amount, currencySymbol))}${
-        payment.reference ? `<br/><strong>Ref:</strong> ${escapeHtml(payment.reference)}` : ''
-      }</div>
-      <div class="divider"></div>
-      <div class="row"><div class="left">TOTAL CUENTA</div><div class="right">${escapeHtml(formatMoney(group.orderTotal ?? group.totalAmount, currencySymbol))}</div></div>
-      <div class="row"><div class="left">TOTAL ABONADO</div><div class="right">${escapeHtml(formatMoney(group.orderPaidAmount ?? group.totalAmount, currencySymbol))}</div></div>
-      <div class="row"><div class="left">SALDO PENDIENTE</div><div class="right">${escapeHtml(formatMoney(group.orderPendingAmount ?? 0, currencySymbol))}</div></div>
-      <div class="footer">DOCUMENTO DE REIMPRESION</div>
-    </div>
-    <script>
-      window.onload = () => { window.print(); };
-      window.onafterprint = () => { window.close(); };
-    </script>
-  </body>
-</html>`;
+    return {
+      title: `REIMPRESION DE ABONO ${paymentIndex + 1}`,
+      brandName,
+      printedAt,
+      metadata: [
+        { label: 'Cuenta', value: group.orderCode },
+        { label: 'Mesa', value: group.tableCode ?? '-' },
+        { label: 'Cliente', value: group.customerName ?? 'Consumidor final' },
+      ],
+      items: [],
+      summary: [
+        { label: 'TOTAL CUENTA', value: formatMoney(group.orderTotal ?? group.totalAmount, currencySymbol) },
+        { label: 'TOTAL ABONADO', value: formatMoney(group.orderPaidAmount ?? group.totalAmount, currencySymbol) },
+        { label: 'SALDO PENDIENTE', value: formatMoney(group.orderPendingAmount ?? 0, currencySymbol) },
+      ],
+      sections: [
+        {
+          entries: [
+            {
+              lines: [
+                `Metodo: ${formatPaymentMethodLabel(payment.method)}`,
+                `Fecha: ${paymentDate}`,
+                `Monto: ${formatMoney(payment.amount, currencySymbol)}`,
+                ...(payment.reference ? [`Ref: ${payment.reference}`] : []),
+              ],
+            },
+          ],
+        },
+      ],
+      footerLabel: 'DOCUMENTO DE REIMPRESION',
+    };
   }
 
-  function handleReprintGroupedAccount(group: GroupedSaleMovement) {
-    const printWindow = openPrintWindow();
-    if (!printWindow) {
-      return;
-    }
-    renderPrintWindow(printWindow, buildGroupedAccountReceiptHtml(group));
+  async function handleReprintGroupedAccount(group: GroupedSaleMovement) {
+    await printReceipt(buildGroupedAccountReceiptDocument(group));
   }
 
-  function handleReprintGroupedPayment(group: GroupedSaleMovement, paymentIndex: number) {
+  async function handleReprintGroupedPayment(group: GroupedSaleMovement, paymentIndex: number) {
     const payment = group.orderPayments?.[paymentIndex];
     if (!payment) {
       return;
     }
-    const printWindow = openPrintWindow();
-    if (!printWindow) {
-      return;
-    }
-    renderPrintWindow(printWindow, buildGroupedPaymentReceiptHtml(group, payment, paymentIndex));
+    await printReceipt(buildGroupedPaymentReceiptDocument(group, payment, paymentIndex));
   }
 
   async function handleOpenShift() {

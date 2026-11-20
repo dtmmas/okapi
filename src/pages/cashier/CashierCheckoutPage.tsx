@@ -2,19 +2,17 @@ import { ArrowLeft, Banknote, CreditCard, Landmark, Printer, Receipt, Split, Und
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { openReceiptPrintSession, printReceipt } from '@/lib/printing/print-service';
 import { StatusBadge } from '@/components/StatusBadge';
 import { payOrder } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
+import type { ReceiptDocument, ReceiptSection } from '@/types/printing';
 
 type Method = 'CASH' | 'CARD' | 'TRANSFER';
 type SplitMode = 'AMOUNT' | 'EQUAL' | 'ITEMS';
 
 function formatMoney(amount: number, currencySymbol: string) {
   return `${currencySymbol} ${amount.toFixed(2)}`;
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
 function formatPaymentMethodLabel(method: Method | 'MIXED') {
@@ -110,7 +108,7 @@ export default function CashierCheckoutPage() {
           ? 'La cuenta aún no entra en preparación. Caja podrá cobrar cuando el pedido se entregue al cliente.'
           : null;
 
-  function buildReceiptHtml(payload: {
+  function buildReceiptDocument(payload: {
     title?: string;
     method: Method | 'MIXED';
     tableCode: string;
@@ -129,143 +127,106 @@ export default function CashierCheckoutPage() {
     receivedAmount?: number;
     change?: number;
     reference?: string;
-  }) {
+  }): ReceiptDocument {
     const brandName = snapshot?.brand?.name ?? 'Restaurante';
     const now = new Date();
-    const dateLabel = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(now);
-    const totalLabel = formatMoney(payload.total, payload.currencySymbol);
-    const paymentLabel = formatMoney(payload.paymentAmount, payload.currencySymbol);
-    const paidLabel = formatMoney(payload.paidAmount, payload.currencySymbol);
-    const pendingLabel = formatMoney(payload.pendingAmount, payload.currencySymbol);
+    const printedAt = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(now);
     const previousPaidAmount = Math.max(0, Number((payload.paidAmount - payload.paymentAmount).toFixed(2)));
-    const previousPaidLabel = formatMoney(previousPaidAmount, payload.currencySymbol);
     const methodLabel = formatPaymentMethodLabel(payload.method);
     const title = payload.title ?? (payload.pendingAmount > 0 ? 'RECIBO DE ABONO' : 'LIQUIDACION FINAL');
 
-    const itemsHtml = payload.lines
-      .map((item) => {
-        const left = `${Number(item.quantity)} x ${escapeHtml(item.product)}`;
-        const right = item.lineTotal !== null ? escapeHtml(formatMoney(item.lineTotal, payload.currencySymbol)) : '';
-        const notes = item.notes ? `<div class="note">${escapeHtml(item.notes)}</div>` : '';
-        return `<div class="row"><div class="left">${left}${notes}</div><div class="right">${right}</div></div>`;
-      })
-      .join('');
+    const sections: ReceiptSection[] = [];
 
-    const paymentMeta = payload.method === 'CASH'
-      ? `<div class="meta"><strong>Pago:</strong> ${methodLabel}<br/><strong>Pago actual:</strong> ${escapeHtml(paymentLabel)}<br/><strong>Recibido:</strong> ${escapeHtml(
-          formatMoney(payload.receivedAmount ?? 0, payload.currencySymbol),
-        )}<br/><strong>Cambio:</strong> ${escapeHtml(formatMoney(payload.change ?? 0, payload.currencySymbol))}</div>`
-      : `<div class="meta"><strong>Pago:</strong> ${methodLabel}<br/><strong>Pago actual:</strong> ${escapeHtml(paymentLabel)}<br/><strong>Referencia:</strong> ${escapeHtml(
-          payload.reference ?? '',
-        )}</div>`;
-    const paymentsHistory =
-      payload.showPaymentsHistory && payload.payments?.length
-        ? `<div class="divider"></div><div class="meta"><strong>PAGOS REGISTRADOS</strong></div>${payload.payments
-            .map((payment) => {
-              const paymentDate = payment.createdAt
-                ? new Date(payment.createdAt).toLocaleString('es-GT', { dateStyle: 'short', timeStyle: 'short' })
-                : '';
-              const paymentReference = payment.reference ? `<br/><strong>Ref:</strong> ${escapeHtml(payment.reference)}` : '';
-              return `<div class="meta"><strong>${formatPaymentMethodLabel(payment.method)}</strong> ${escapeHtml(
-                formatMoney(payment.amount, payload.currencySymbol),
-              )}${paymentDate ? `<br/>${escapeHtml(paymentDate)}` : ''}${paymentReference}</div>`;
-            })
-            .join('')}`
-        : '';
+    if (payload.showPaymentsHistory && payload.payments?.length) {
+      sections.push({
+        title: 'PAGOS REGISTRADOS',
+        entries: payload.payments.map((payment) => {
+          const paymentDate = payment.createdAt
+            ? new Date(payment.createdAt).toLocaleString('es-GT', { dateStyle: 'short', timeStyle: 'short' })
+            : '';
+          const lines = [formatMoney(payment.amount, payload.currencySymbol)];
+          if (paymentDate) {
+            lines.push(paymentDate);
+          }
+          if (payment.reference) {
+            lines.push(`Ref: ${payment.reference}`);
+          }
+          return {
+            title: formatPaymentMethodLabel(payment.method),
+            lines,
+          };
+        }),
+      });
+    }
 
-    const summaryRows = [
-      `<div class="row"><div class="left">TOTAL CUENTA</div><div class="right">${escapeHtml(totalLabel)}</div></div>`,
-      previousPaidAmount > 0
-        ? `<div class="row"><div class="left">ABONOS PREVIOS</div><div class="right">${escapeHtml(previousPaidLabel)}</div></div>`
-        : '',
-      `<div class="row"><div class="left">${payload.pendingAmount > 0 ? 'ABONO REGISTRADO' : 'PAGO ACTUAL'}</div><div class="right">${escapeHtml(paymentLabel)}</div></div>`,
-      previousPaidAmount > 0 || payload.pendingAmount > 0
-        ? `<div class="row"><div class="left">TOTAL ABONADO</div><div class="right">${escapeHtml(paidLabel)}</div></div>`
-        : '',
-      `<div class="row"><div class="left">SALDO PENDIENTE</div><div class="right">${escapeHtml(pendingLabel)}</div></div>`,
-    ]
-      .filter(Boolean)
-      .join('');
-    const summaryFormula =
-      previousPaidAmount > 0
-        ? `<div class="summary-note">${escapeHtml(previousPaidLabel)} + ${escapeHtml(paymentLabel)} = ${escapeHtml(paidLabel)}</div>`
-        : '';
+    if (payload.showPaymentMeta !== false) {
+      sections.push({
+        entries: [
+          {
+            lines:
+              payload.method === 'CASH'
+                ? [
+                    `Pago: ${methodLabel}`,
+                    `Pago actual: ${formatMoney(payload.paymentAmount, payload.currencySymbol)}`,
+                    `Recibido: ${formatMoney(payload.receivedAmount ?? 0, payload.currencySymbol)}`,
+                    `Cambio: ${formatMoney(payload.change ?? 0, payload.currencySymbol)}`,
+                  ]
+                : [
+                    `Pago: ${methodLabel}`,
+                    `Pago actual: ${formatMoney(payload.paymentAmount, payload.currencySymbol)}`,
+                    `Referencia: ${payload.reference ?? ''}`,
+                  ],
+          },
+        ],
+      });
+    }
 
-    return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>${title}</title>
-    <style>
-      * { box-sizing: border-box; }
-      @page { size: 80mm auto; margin: 0; }
-      body { margin: 0; background: #fff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: #111; }
-      .ticket { width: 80mm; padding: 3mm 3mm 2mm; margin: 0; }
-      .center { text-align: center; }
-      .title { font-weight: 900; font-size: 20px; letter-spacing: 0.10em; }
-      .subtitle { font-weight: 900; font-size: 14px; margin-top: 4px; }
-      .meta { font-size: 12px; margin-top: 8px; font-weight: 800; }
-      .divider { border-top: 2px dashed #222; margin: 8px 0; }
-      .row { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; font-size: 13px; padding: 6px 0; }
-      .left { flex: 1 1 auto; min-width: 0; font-weight: 800; }
-      .right { flex: 0 0 40%; max-width: 40%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 900; }
-      .note { font-weight: 700; font-size: 12px; opacity: 0.88; margin-top: 2px; white-space: pre-wrap; }
-      .summary .row { padding: 3px 0; }
-      .summary-note { margin-top: 6px; text-align: center; font-size: 11px; font-weight: 800; opacity: 0.82; }
-      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
-      @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-    </style>
-  </head>
-  <body>
-    <div class="ticket">
-      <div class="center">
-        <div class="subtitle">${escapeHtml(brandName)}</div>
-        <div class="title">${title}</div>
-        <div class="meta">${escapeHtml(dateLabel)}</div>
-      </div>
-      <div class="divider"></div>
-      <div class="meta"><strong>Mesa:</strong> ${escapeHtml(payload.tableCode)}<br/><strong>Cliente:</strong> ${escapeHtml(payload.customerName)}<br/><strong>Cuenta:</strong> ${escapeHtml(payload.orderCode)}</div>
-      <div class="divider"></div>
-      ${itemsHtml || '<div class="meta">Sin items.</div>'}
-      <div class="divider"></div>
-      <div class="summary">${summaryRows}${summaryFormula}</div>
-      ${paymentsHistory}
-      ${payload.showPaymentMeta === false ? '' : `<div class="divider"></div>${paymentMeta}`}
-      <div class="footer">${escapeHtml(payload.footerLabel ?? (payload.pendingAmount > 0 ? 'ABONO REGISTRADO' : 'CUENTA LIQUIDADA'))}</div>
-    </div>
-    <script>
-      window.onload = () => { window.print(); };
-      window.onafterprint = () => { window.close(); };
-    </script>
-  </body>
-</html>`;
+    return {
+      title,
+      brandName,
+      printedAt,
+      metadata: [
+        { label: 'Mesa', value: payload.tableCode },
+        { label: 'Cliente', value: payload.customerName },
+        { label: 'Cuenta', value: payload.orderCode },
+      ],
+      items: payload.lines.map((item) => ({
+        left: `${Number(item.quantity)} x ${item.product}`,
+        right: item.lineTotal !== null ? formatMoney(item.lineTotal, payload.currencySymbol) : '',
+        note: item.notes,
+      })),
+      summary: [
+        { label: 'TOTAL CUENTA', value: formatMoney(payload.total, payload.currencySymbol) },
+        ...(previousPaidAmount > 0
+          ? [{ label: 'ABONOS PREVIOS', value: formatMoney(previousPaidAmount, payload.currencySymbol) }]
+          : []),
+        {
+          label: payload.pendingAmount > 0 ? 'ABONO REGISTRADO' : 'PAGO ACTUAL',
+          value: formatMoney(payload.paymentAmount, payload.currencySymbol),
+        },
+        ...(previousPaidAmount > 0 || payload.pendingAmount > 0
+          ? [{ label: 'TOTAL ABONADO', value: formatMoney(payload.paidAmount, payload.currencySymbol) }]
+          : []),
+        { label: 'SALDO PENDIENTE', value: formatMoney(payload.pendingAmount, payload.currencySymbol) },
+      ],
+      summaryNote:
+        previousPaidAmount > 0
+          ? `${formatMoney(previousPaidAmount, payload.currencySymbol)} + ${formatMoney(payload.paymentAmount, payload.currencySymbol)} = ${formatMoney(
+              payload.paidAmount,
+              payload.currencySymbol,
+            )}`
+          : undefined,
+      sections,
+      footerLabel: payload.footerLabel ?? (payload.pendingAmount > 0 ? 'ABONO REGISTRADO' : 'CUENTA LIQUIDADA'),
+    };
   }
 
-  function openPrintWindow() {
-    const printWindow = window.open('', '_blank', 'width=420,height=700');
-    if (!printWindow) {
+  function buildFullAccountReceiptDocument(payments: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>) {
+    if (!order) {
       return null;
     }
-    try {
-      printWindow.opener = null;
-    } catch {
-    }
-    return printWindow;
-  }
 
-  function renderPrintWindow(printWindow: Window, html: string) {
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
-  }
-
-  function buildFullAccountReceiptHtml(payments: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>) {
-    if (!order) {
-      return '';
-    }
-
-    return buildReceiptHtml({
+    return buildReceiptDocument({
       title: pendingAmount > 0 ? 'PRECUENTA' : 'LIQUIDACION FINAL',
       method: payments.at(-1)?.method === 'CARD' || payments.at(-1)?.method === 'TRANSFER' ? payments.at(-1)!.method : 'CASH',
       tableCode: table?.code ?? order.tableCode ?? '',
@@ -290,18 +251,17 @@ export default function CashierCheckoutPage() {
     });
   }
 
-  function handlePrintFullAccount(paymentsOverride?: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>) {
+  async function handlePrintFullAccount(paymentsOverride?: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>) {
     if (!order) {
       return;
     }
 
     const payments = paymentsOverride ?? order.payments;
-    const printWindow = openPrintWindow();
-    if (!printWindow) {
+    const document = buildFullAccountReceiptDocument(payments);
+    if (!document) {
       return;
     }
-
-    renderPrintWindow(printWindow, buildFullAccountReceiptHtml(payments));
+    await printReceipt(document);
   }
 
   function applyEqualSplit(peopleCount: number) {
@@ -339,7 +299,7 @@ export default function CashierCheckoutPage() {
 
     setSubmitting(true);
     setError(null);
-    const printWindow = openPrintWindow();
+    const printSession = openReceiptPrintSession();
 
     try {
       const normalizedReference = reference.trim();
@@ -354,7 +314,7 @@ export default function CashierCheckoutPage() {
         throw new Error('El monto no puede superar el saldo pendiente.');
       }
 
-      let receiptPayload: Parameters<typeof buildReceiptHtml>[0] | null = null;
+      let receiptDocument: ReceiptDocument | null = null;
       const receiptLines =
         splitMode === 'ITEMS' && selectedSplitLines.length
           ? selectedSplitLines.map((line) => ({
@@ -384,7 +344,7 @@ export default function CashierCheckoutPage() {
           appliedItemIds: splitMode === 'ITEMS' ? selectedItemIds : null,
         });
 
-        receiptPayload = {
+        receiptDocument = buildReceiptDocument({
           method,
           tableCode: table?.code ?? order.tableCode ?? '',
           orderCode: order.code,
@@ -397,11 +357,11 @@ export default function CashierCheckoutPage() {
           currencySymbol,
           receivedAmount: numericReceived,
           change: Math.max(0, numericReceived - amount),
-        };
+        });
 
         await refreshSnapshot();
-        if (printWindow && receiptPayload) {
-          renderPrintWindow(printWindow, buildReceiptHtml(receiptPayload));
+        if (receiptDocument) {
+          await printSession.print(receiptDocument);
         }
 
         if (result.completed) {
@@ -410,7 +370,7 @@ export default function CashierCheckoutPage() {
             { method, amount: result.registeredAmount, reference: null, createdAt: new Date().toISOString() },
           ];
           if (window.confirm('Cuenta liquidada. Deseas imprimir la liquidacion final detallada con todos los abonos registrados?')) {
-            handlePrintFullAccount(completedPayments);
+            await handlePrintFullAccount(completedPayments);
           }
           navigate('/cashier/mesas', { replace: true });
         }
@@ -431,7 +391,7 @@ export default function CashierCheckoutPage() {
           appliedItemIds: splitMode === 'ITEMS' ? selectedItemIds : null,
         });
 
-        receiptPayload = {
+        receiptDocument = buildReceiptDocument({
           method,
           tableCode: table?.code ?? order.tableCode ?? '',
           orderCode: order.code,
@@ -443,11 +403,11 @@ export default function CashierCheckoutPage() {
           pendingAmount: result.remainingAmount,
           currencySymbol,
           reference: normalizedReference,
-        };
+        });
 
         await refreshSnapshot();
-        if (printWindow && receiptPayload) {
-          renderPrintWindow(printWindow, buildReceiptHtml(receiptPayload));
+        if (receiptDocument) {
+          await printSession.print(receiptDocument);
         }
 
         if (result.completed) {
@@ -456,15 +416,13 @@ export default function CashierCheckoutPage() {
             { method, amount: result.registeredAmount, reference: normalizedReference, createdAt: new Date().toISOString() },
           ];
           if (window.confirm('Cuenta liquidada. Deseas imprimir la liquidacion final detallada con todos los abonos registrados?')) {
-            handlePrintFullAccount(completedPayments);
+            await handlePrintFullAccount(completedPayments);
           }
           navigate('/cashier/mesas', { replace: true });
         }
       }
     } catch (err) {
-      if (printWindow) {
-        printWindow.close();
-      }
+      printSession.cancel();
       setError(err instanceof Error ? err.message : 'No fue posible cobrar.');
     } finally {
       setSubmitting(false);

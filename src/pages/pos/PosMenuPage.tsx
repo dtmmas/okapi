@@ -2,11 +2,13 @@ import { ArrowLeftRight, Beef, CakeSlice, Check, ChefHat, Coffee, CreditCard, Fi
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon, type IconComponent } from '@/components/AppIcon';
+import { printReceipt } from '@/lib/printing/print-service';
 import { StatusBadge } from '@/components/StatusBadge';
 import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
 import { createOrUpdateOrder, moveTableAccount, requestOrderBill } from '@/services/api';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 import { useSessionStore } from '@/store/useSessionStore';
+import type { ReceiptDocument } from '@/types/printing';
 import type { MenuCategory } from '@/types/restaurant';
 
 type MenuSection = 'DISHES' | 'BEVERAGES' | 'PRODUCTS' | 'EXTRAS' | 'SAUCES' | 'DRESSINGS';
@@ -273,99 +275,54 @@ export default function PosMenuPage() {
   }, [preBillItems]);
   const currencySymbol = snapshot?.brand.currencySymbol ?? 'Q';
 
-  function escapeHtml(value: string) {
-    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-  }
-
   function formatMoney(amount: number) {
     return `${currencySymbol} ${amount.toFixed(2)}`;
   }
 
-  function handlePrintPreBill() {
+  function buildPreBillReceiptDocument(): ReceiptDocument | null {
     if (!activeOrder) {
-      return;
+      return null;
     }
 
     const brandName = snapshot?.brand?.name ?? 'Restaurante';
     const now = new Date();
-    const dateLabel = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(now);
+    const printedAt = new Intl.DateTimeFormat('es-GT', { dateStyle: 'medium', timeStyle: 'short' }).format(now);
     const tableLabel = selectedTable?.code ?? activeOrder.tableCode ?? '';
     const customerLabel = activeOrder.customerName || customerName || 'Consumidor final';
     const total = activeOrder.total ?? 0;
     const hasPrices = preBillItems.some((item) => item.unitPrice !== null);
-    const totalLabel = formatMoney(total);
-    const totalFontSize = totalLabel.length >= 16 ? 12 : totalLabel.length >= 13 ? 13 : 14;
+    return {
+      title: 'PRECUENTA',
+      brandName,
+      printedAt,
+      metadata: [
+        { label: 'Mesa', value: tableLabel },
+        { label: 'Cliente', value: customerLabel },
+        { label: 'Cuenta', value: activeOrder.code },
+      ],
+      items: preBillItems.map((item) => ({
+        left: `${Number(item.quantity)} x ${item.product}`,
+        right: hasPrices && item.lineTotal !== null ? formatMoney(item.lineTotal) : '',
+        note: item.notes,
+      })),
+      summary: [{ label: 'TOTAL', value: formatMoney(total) }],
+      sections: hasPrices
+        ? []
+        : [
+            {
+              entries: [{ lines: ['* Los precios por línea pueden no estar disponibles en esta vista.'] }],
+            },
+          ],
+      footerLabel: 'NO ES COMPROBANTE DE PAGO',
+    };
+  }
 
-    const itemsHtml = preBillItems
-      .map((item) => {
-        const left = `${Number(item.quantity)} x ${escapeHtml(item.product)}`;
-        const right = hasPrices && item.lineTotal !== null ? escapeHtml(formatMoney(item.lineTotal)) : '';
-        const notes = item.notes ? `<div class="note">${escapeHtml(item.notes)}</div>` : '';
-        return `<div class="row"><div class="left">${left}${notes}</div><div class="right">${right}</div></div>`;
-      })
-      .join('');
-
-    const html = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Precuenta</title>
-    <style>
-      * { box-sizing: border-box; }
-      @page { size: 80mm auto; margin: 0; }
-      body { margin: 0; background: #fff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: #111; }
-      .ticket { width: 80mm; padding: 3mm 3mm 2mm; margin: 0; }
-      .center { text-align: center; }
-      .title { font-weight: 900; font-size: 20px; letter-spacing: 0.10em; }
-      .subtitle { font-weight: 900; font-size: 14px; margin-top: 4px; }
-      .meta { font-size: 12px; margin-top: 8px; font-weight: 700; }
-      .divider { border-top: 2px dashed #222; margin: 8px 0; }
-      .row { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; font-size: 13px; padding: 6px 0; }
-      .left { flex: 1 1 auto; min-width: 0; font-weight: 800; }
-      .right { flex: 0 0 40%; max-width: 40%; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 900; }
-      .note { font-weight: 700; font-size: 12px; opacity: 0.88; margin-top: 2px; white-space: pre-wrap; }
-      .total { font-size: 15px; }
-      .total .left { font-weight: 900; }
-      .total .right { font-size: var(--total-size, 14px); }
-      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
-      @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-    </style>
-  </head>
-  <body>
-    <div class="ticket" style="--total-size: ${totalFontSize}px;">
-      <div class="center">
-        <div class="subtitle">${escapeHtml(brandName)}</div>
-        <div class="title">PRECUENTA</div>
-        <div class="meta">${escapeHtml(dateLabel)}</div>
-      </div>
-      <div class="divider"></div>
-      <div class="meta"><strong>Mesa:</strong> ${escapeHtml(tableLabel)}<br/><strong>Cliente:</strong> ${escapeHtml(customerLabel)}<br/><strong>Cuenta:</strong> ${escapeHtml(activeOrder.code)}</div>
-      <div class="divider"></div>
-      ${itemsHtml || '<div class="meta">Sin items.</div>'}
-      <div class="divider"></div>
-      <div class="row total"><div class="left">TOTAL</div><div class="right">${escapeHtml(totalLabel)}</div></div>
-      ${hasPrices ? '' : '<div class="meta">* Los precios por línea pueden no estar disponibles en esta vista.</div>'}
-      <div class="footer">NO ES COMPROBANTE DE PAGO</div>
-    </div>
-    <script>
-      window.onload = () => { window.print(); };
-      window.onafterprint = () => { window.close(); };
-    </script>
-  </body>
-</html>`;
-
-    const printWindow = window.open('', '_blank', 'width=420,height=700');
-    if (!printWindow) {
+  async function handlePrintPreBill() {
+    const document = buildPreBillReceiptDocument();
+    if (!document) {
       return;
     }
-    try {
-      printWindow.opener = null;
-    } catch {
-    }
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
+    await printReceipt(document);
   }
 
   async function handleRequestBill() {
