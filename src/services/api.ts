@@ -110,6 +110,66 @@ export function updateBrandSettings(payload: RestaurantSnapshot['brand']) {
   });
 }
 
+export type BackupMode = 'database' | 'full';
+
+export type BackupJobSnapshot = {
+  jobId: string;
+  mode: BackupMode;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  message: string;
+  fileName: string | null;
+  error: string | null;
+  databaseExportMethod: 'mysqldump' | 'generated-sql' | null;
+  databaseExportNote: string | null;
+  completedAt: string | null;
+};
+
+export function startSettingsBackup(mode: BackupMode) {
+  return apiRequest<{ jobId: string; mode: BackupMode; status: BackupJobSnapshot['status']; progress: number; message: string }>(
+    '/api/v1/settings/backups',
+    {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    },
+  );
+}
+
+export function getSettingsBackupStatus(jobId: string) {
+  return apiRequest<BackupJobSnapshot>(`/api/v1/settings/backups/${jobId}`);
+}
+
+export async function downloadSettingsBackup(jobId: string, fileName: string | null) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const response = await fetch(`/api/v1/settings/backups/${jobId}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+
+  if (!response.ok) {
+    const rawBody = await response.text();
+    let message = `No fue posible descargar el respaldo (${response.status}).`;
+    if (rawBody) {
+      try {
+        const payload = JSON.parse(rawBody) as { message?: string };
+        if (payload.message) {
+          message = payload.message;
+        }
+      } catch {
+        // keep default message
+      }
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName?.trim() || `okapi-backup-${jobId}.zip`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function createBranch(payload: {
   name: string;
   city: string;
@@ -263,6 +323,13 @@ export function moveTableAccount(payload: { fromTableId: number; toTableId: numb
   });
 }
 
+export function mergeTableAccounts(payload: { hostTableId: number; joinTableId: number }) {
+  return apiRequest('/api/v1/tables/merge', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 type TableChange = import('../../shared/table-reservation').ReservationChange & { tableId: number };
 
 export function updateTableStatus({ tableId, ...change }: TableChange) {
@@ -326,6 +393,41 @@ export function updateTable(
 export function deleteTable(tableId: number) {
   return apiRequest<{ success: true }>(`/api/v1/tables/${tableId}`, {
     method: 'DELETE',
+  });
+}
+
+export function reorderTables(payload: { area: string; tableIds: number[] }) {
+  return apiRequest<{ success: true }>('/api/v1/tables/reorder', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createTableArea(payload: { name: string }) {
+  return apiRequest<{ id: number; name: string; sortOrder: number }>('/api/v1/table-areas', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function renameTableArea(payload: { previousName: string; nextName: string }) {
+  return apiRequest<{ success: true }>('/api/v1/table-areas/rename', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteTableArea(payload: { name: string }) {
+  return apiRequest<{ success: true }>('/api/v1/table-areas', {
+    method: 'DELETE',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function reorderTableAreas(payload: { areaNames: string[] }) {
+  return apiRequest<{ success: true }>('/api/v1/table-areas/reorder', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
   });
 }
 

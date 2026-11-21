@@ -52,6 +52,11 @@ import {
   payOrderForUser,
   listPastryOrders,
   listTables,
+  reorderTablesForUser,
+  createTableAreaForUser,
+  deleteTableAreaForUser,
+  renameTableAreaForUser,
+  reorderTableAreasForUser,
   updateCategoryForUser,
   updateCustomerForUser,
   updateInventoryItemForUser,
@@ -59,6 +64,7 @@ import {
   updateTableStatusForUser,
   updateTableForUser,
   moveOpenOrderToTable,
+  mergeOpenOrdersToTable,
   updateStationOrderStatus,
   updateStationOrderItemStatus,
   updateBrandForUser,
@@ -71,6 +77,7 @@ import {
   produceSubRecipeForUser,
   requestOrderBillForUser,
 } from '../services/restaurant-service.js';
+import { getBackupDownloadPath, getBackupJob, startBackupJob } from '../services/backup-service.js';
 
 const router = Router();
 const roleCodeValues = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAITER', 'KITCHEN', 'BAR', 'PASTRY', 'DELIVERY', 'KIOSK'] as const;
@@ -172,21 +179,89 @@ router.post('/uploads/menu-image', requireAuth, requirePermissions(['INVENTORY_M
 });
 
 router.get('/bootstrap', requireAuth, async (req: ApiRequest, res) => {
-  const snapshot = await getBootstrapSnapshot(req.authUser);
-  if (req.authUser.permissions.includes('KIOSK_ONLY')) {
-    const { brand, menuCategories, menuProducts } = snapshot;
-    const tables = snapshot.tables.filter(t => t.branchId === req.authUser.branchId)
-      .map(({ id, code, area, capacity, status }) => ({ id, code, area, capacity, status }));
-    return res.json({ success: true, data: { brand, menuCategories, menuProducts, tables } });
+  try {
+    const snapshot = await getBootstrapSnapshot(req.authUser);
+    if (req.authUser.permissions.includes('KIOSK_ONLY')) {
+      const { brand, menuCategories, menuProducts } = snapshot;
+      const tables = snapshot.tables.filter(t => t.branchId === req.authUser.branchId)
+        .map(({ id, code, area, capacity, status }) => ({ id, code, area, capacity, status }));
+      return res.json({ success: true, data: { brand, menuCategories, menuProducts, tables } });
+    }
+    res.json({
+      success: true,
+      data: snapshot,
+    });
+  } catch (error) {
+    console.error('bootstrap failed', error);
+    res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible cargar el entorno.',
+    });
   }
-  res.json({
-    success: true,
-    data: snapshot,
-  });
 });
 
 router.get('/settings/brand', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
   res.json({ success: true, data: await getBrandForUser(req.authUser) });
+});
+
+const backupModeSchema = z.object({
+  mode: z.enum(['database', 'full']),
+});
+
+router.post('/settings/backups', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  try {
+    const payload = backupModeSchema.parse(req.body);
+    const job = startBackupJob(payload.mode, req.authUser.id);
+    res.status(202).json({
+      success: true,
+      data: {
+        jobId: job.id,
+        mode: job.mode,
+        status: job.status,
+        progress: job.progress,
+        message: job.message,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible iniciar el respaldo.',
+    });
+  }
+});
+
+router.get('/settings/backups/:jobId', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const job = getBackupJob(String(req.params.jobId), req.authUser.id);
+  if (!job) {
+    res.status(404).json({ success: false, message: 'Respaldo no encontrado.' });
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: {
+      jobId: job.id,
+      mode: job.mode,
+      status: job.status,
+      progress: job.progress,
+      message: job.message,
+      fileName: job.fileName ?? null,
+      error: job.error ?? null,
+      databaseExportMethod: job.databaseExportMethod ?? null,
+      databaseExportNote: job.databaseExportNote ?? null,
+      completedAt: job.completedAt ?? null,
+    },
+  });
+});
+
+router.get('/settings/backups/:jobId/download', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const asset = getBackupDownloadPath(String(req.params.jobId), req.authUser.id);
+  if (!asset) {
+    res.status(404).json({ success: false, message: 'El archivo de respaldo no está disponible.' });
+    return;
+  }
+
+  res.download(asset.filePath, asset.fileName);
 });
 
 router.put('/settings/brand', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
@@ -350,6 +425,99 @@ router.post('/tables', requireAuth, requirePermissions(['TABLES_MANAGE']), async
   }
 });
 
+router.post('/table-areas', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
+  const parsed = z.object({ name: z.string().min(1) }).safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Datos inválidos.', errors: parsed.error.flatten() });
+  }
+
+  try {
+    const created = await createTableAreaForUser(req.authUser, { name: parsed.data.name });
+    return res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible crear el área.' });
+  }
+});
+
+router.patch('/table-areas/rename', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
+  const parsed = z
+    .object({
+      previousName: z.string().min(1),
+      nextName: z.string().min(1),
+    })
+    .safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Datos inválidos.', errors: parsed.error.flatten() });
+  }
+
+  try {
+    await renameTableAreaForUser(req.authUser, {
+      previousName: parsed.data.previousName,
+      nextName: parsed.data.nextName,
+    });
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible renombrar el área.' });
+  }
+});
+
+router.delete('/table-areas', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
+  const parsed = z.object({ name: z.string().min(1) }).safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Datos inválidos.', errors: parsed.error.flatten() });
+  }
+
+  try {
+    await deleteTableAreaForUser(req.authUser, { name: parsed.data.name });
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible eliminar el área.' });
+  }
+});
+
+router.put('/table-areas/reorder', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
+  const parsed = z
+    .object({
+      areaNames: z.array(z.string().min(1)).min(1),
+    })
+    .safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Datos inválidos.', errors: parsed.error.flatten() });
+  }
+
+  try {
+    await reorderTableAreasForUser(req.authUser, { areaNames: parsed.data.areaNames });
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible ordenar las áreas.' });
+  }
+});
+
+router.put('/tables/reorder', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
+  const parsed = z
+    .object({
+      area: z.string().min(1),
+      tableIds: z.array(z.number().int().positive()).min(1),
+    })
+    .safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Datos inválidos.', errors: parsed.error.flatten() });
+  }
+
+  try {
+    await reorderTablesForUser(req.authUser, {
+      area: parsed.data.area,
+      tableIds: parsed.data.tableIds,
+    });
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible ordenar las mesas.' });
+  }
+});
+
 router.patch('/tables/:tableId', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
   const tableId = Number(req.params.tableId);
   if (!tableId) {
@@ -391,16 +559,35 @@ router.delete('/tables/:tableId', requireAuth, requirePermissions(['TABLES_MANAG
 });
 
 const reservationChangeSchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('FREE') }),
+  z.object({
+    status: z.literal('FREE'),
+    reason: z.string().trim().max(250).optional(),
+  }),
   z.object({ status: z.literal('RESERVED'), reservation: z.object({
     name: z.string().trim().min(1, 'Ingresa el nombre.').max(150),
+    phone: z.string().trim().max(40).optional(),
     address: z.string().trim().max(250).default(''),
     guests: z.number().int().positive('Indica para cuántas personas es la reserva.'),
+    observations: z.string().trim().max(500).optional(),
   }) }),
 ]).transform((change): import('../../shared/table-reservation.js').ReservationChange => {
-  if (change.status === 'FREE') return { status: 'FREE' };
-  const { name, address, guests } = change.reservation;
-  return { status: 'RESERVED', reservation: { name, address, guests } };
+  if (change.status === 'FREE') {
+    const reason = change.reason?.trim();
+    return reason ? { status: 'FREE', reason } : { status: 'FREE' };
+  }
+  const { name, address, guests, phone, observations } = change.reservation;
+  const notes = observations?.trim();
+  const phoneNumber = phone?.trim();
+  return {
+    status: 'RESERVED',
+    reservation: {
+      name,
+      address,
+      guests,
+      ...(phoneNumber ? { phone: phoneNumber } : {}),
+      ...(notes ? { observations: notes } : {}),
+    },
+  };
 });
 const kioskKeySchema = z.string().regex(/^[a-f0-9]{32}$/);
 
@@ -452,6 +639,25 @@ router.post('/tables/move', requireAuth, requirePermissions(['TABLES_MANAGE']), 
     return res.status(400).json({
       success: false,
       message: error instanceof Error ? error.message : 'No fue posible mover la cuenta.',
+    });
+  }
+});
+
+router.post('/tables/merge', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
+  try {
+    const hostTableId = Number(req.body?.hostTableId);
+    const joinTableId = Number(req.body?.joinTableId);
+
+    if (!hostTableId || !joinTableId) {
+      return res.status(400).json({ success: false, message: 'hostTableId y joinTableId son obligatorios.' });
+    }
+
+    await mergeOpenOrdersToTable(req.authUser, { hostTableId, joinTableId });
+    return res.json({ success: true, message: 'Cuentas unidas correctamente.' });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible unir las mesas.',
     });
   }
 });

@@ -114,6 +114,7 @@ model Tenant {
   products  Product[]
   customers Customer[]
   tables    RestaurantTable[]
+  tableAreas TableArea[]
   orders    Order[]
   cashShifts CashShift[]
   cashMovements CashMovementRecord[]
@@ -213,12 +214,24 @@ model Product {
   orderItems OrderItem[]
 }
 
+model TableArea {
+  id        Int    @id @default(autoincrement())
+  tenantId  Int
+  name      String
+  sortOrder Int    @default(0)
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, name])
+  @@index([tenantId, sortOrder])
+}
+
 model RestaurantTable {
   id         Int         @id @default(autoincrement())
   tenantId   Int
   branchId   Int
   code       String
   area       String
+  sortOrder  Int         @default(0)
   capacity   Int
   imageUrl   String?     @db.VarChar(255)
   status     TableStatus @default(FREE)
@@ -229,6 +242,7 @@ model RestaurantTable {
   orders     Order[]
 
   @@unique([branchId, code])
+  @@index([branchId, area, sortOrder])
 }
 
 model TableReservation {
@@ -236,8 +250,10 @@ model TableReservation {
   table RestaurantTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
   source String @db.VarChar(8)
   name String @db.VarChar(150)
+  phone String? @db.VarChar(40)
   address String @db.VarChar(250)
   guests Int
+  observations String? @db.VarChar(500)
   kioskKey String? @db.VarChar(64)
 }
 

@@ -166,12 +166,19 @@ export type RestaurantOrder = {
   }>;
 };
 
+export type TableArea = {
+  id: number;
+  name: string;
+  sortOrder: number;
+};
+
 export type RestaurantTable = {
   id: number;
   branchId?: number | null;
   code: string;
   capacity: number;
   area: string;
+  sortOrder?: number;
   status: 'FREE' | 'OCCUPIED' | 'RESERVED';
   currentOrder?: string;
   reservation?: import('../../shared/table-reservation').TableReservationInfo;
@@ -415,6 +422,7 @@ export type RestaurantSnapshot = {
   topProducts: ProductPerformance[];
   activeOrders: RestaurantOrder[];
   tables: RestaurantTable[];
+  tableAreas?: TableArea[];
   kitchenOrders: KitchenOrder[];
   barOrders: KitchenOrder[];
   pastryOrders: KitchenOrder[];

@@ -3,7 +3,7 @@ import { paperWidth, paperWidths, readPaperWidth, savePaperWidth } from '@/lib/p
 import { printReceipt, receiptFormatter } from '@/lib/printing/print-service';
 import { buildReceiptHtml } from '@/lib/printing/receipt-builders';
 import { hasSunmiPrinterBridge } from '@/lib/printing/sunmi-print-provider';
-import { getBrandSettings, updateBrandSettings } from '@/services/api';
+import { downloadSettingsBackup, getBrandSettings, getSettingsBackupStatus, startSettingsBackup, updateBrandSettings, type BackupMode } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -26,6 +26,14 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [previewHtml, setPreviewHtml] = useState('');
+  const [backupJobId, setBackupJobId] = useState<string | null>(null);
+  const [backupMode, setBackupMode] = useState<BackupMode | null>(null);
+  const [backupProgress, setBackupProgress] = useState(0);
+  const [backupMessage, setBackupMessage] = useState('');
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
+  const [backupExportNote, setBackupExportNote] = useState<string | null>(null);
   const formatPreview = useMemo(() => receiptFormatter(logoData), [width, logoData]);
   const sample = useMemo(() => ({
     brandName: name.trim() || 'Restaurante', title: 'PRUEBA DE IMPRESIÓN',
@@ -79,6 +87,95 @@ export default function SettingsPage() {
         setLoading(false);
       });
   }, [snapshot]);
+
+  useEffect(() => {
+    if (!backupJobId || !backupRunning) {
+      return;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await getSettingsBackupStatus(backupJobId);
+        if (cancelled) {
+          return;
+        }
+
+        setBackupProgress(status.progress);
+        setBackupMessage(status.message);
+
+        if (status.status === 'completed') {
+          await downloadSettingsBackup(backupJobId, status.fileName);
+          setBackupRunning(false);
+          setBackupSuccess(
+            backupMode === 'full'
+              ? 'Respaldo completo generado y descargado.'
+              : 'Respaldo de base de datos generado y descargado.',
+          );
+          setBackupExportNote(
+            status.databaseExportMethod === 'generated-sql' && status.databaseExportNote
+              ? status.databaseExportNote
+              : status.databaseExportMethod === 'mysqldump'
+                ? 'Base de datos exportada con mysqldump (formato SQL estándar).'
+                : null,
+          );
+          setBackupJobId(null);
+          setBackupMode(null);
+          return;
+        }
+
+        if (status.status === 'failed') {
+          setBackupRunning(false);
+          setBackupError(status.error ?? 'No fue posible completar el respaldo.');
+          setBackupJobId(null);
+          setBackupMode(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setBackupRunning(false);
+          setBackupError(err instanceof Error ? err.message : 'No fue posible consultar el progreso del respaldo.');
+          setBackupJobId(null);
+          setBackupMode(null);
+        }
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 700);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [backupJobId, backupMode, backupRunning]);
+
+  async function handleBackup(mode: BackupMode) {
+    if (backupRunning) {
+      return;
+    }
+
+    setBackupRunning(true);
+    setBackupError(null);
+    setBackupSuccess(null);
+    setBackupExportNote(null);
+    setBackupProgress(0);
+    setBackupMessage('Iniciando...');
+    setBackupMode(mode);
+
+    try {
+      const started = await startSettingsBackup(mode);
+      setBackupJobId(started.jobId);
+      setBackupProgress(started.progress);
+      setBackupMessage(started.message);
+    } catch (err) {
+      setBackupRunning(false);
+      setBackupMode(null);
+      setBackupJobId(null);
+      setBackupError(err instanceof Error ? err.message : 'No fue posible iniciar el respaldo.');
+    }
+  }
 
   async function handleSave() {
     if (!snapshot) {
@@ -290,13 +387,78 @@ export default function SettingsPage() {
         )}
       </Panel>
 
+      <Panel title="Respaldos" subtitle="Copias de seguridad descargables con seguimiento en vivo">
+        <p className="text-sm text-slate-600 dark:text-zinc-400">
+          Genera un archivo para guardar fuera del servidor. Solo puede ejecutarse un respaldo a la vez.
+        </p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            disabled={backupRunning}
+            onClick={() => void handleBackup('database')}
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
+          >
+            <p className="text-sm font-semibold text-slate-950 dark:text-white">Solo base de datos</p>
+            <p className="mt-2 text-xs text-slate-500 dark:text-zinc-500">
+              Volcado SQL con mysqldump; si no está instalado, se genera un .sql desde las tablas.
+            </p>
+          </button>
+          <button
+            type="button"
+            disabled={backupRunning}
+            onClick={() => void handleBackup('full')}
+            className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-4 py-4 text-left transition hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <p className="text-sm font-semibold text-emerald-950 dark:text-white">Completo (BD + archivos)</p>
+            <p className="mt-2 text-xs text-emerald-900/80 dark:text-emerald-100/80">
+              Incluye la base de datos y las imágenes subidas del menú (platillos, bebidas, salsas, etc.).
+            </p>
+          </button>
+        </div>
+
+        {backupRunning || backupProgress > 0 ? (
+          <div className="mt-5 space-y-2">
+            <div className="flex items-center justify-between text-xs text-slate-600 dark:text-zinc-400">
+              <span>{backupMessage || 'Procesando respaldo...'}</span>
+              <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{backupProgress}%</span>
+            </div>
+            <div
+              className="h-3 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-white/10"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={backupProgress}
+              aria-label="Progreso del respaldo"
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-sky-400 via-emerald-400 to-teal-500 transition-[width] duration-300 ease-out"
+                style={{ width: `${backupProgress}%` }}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {backupError ? (
+          <div className="mt-4 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-200">
+            {backupError}
+          </div>
+        ) : null}
+        {backupSuccess ? (
+          <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-200">
+            <p>{backupSuccess}</p>
+            {backupExportNote ? <p className="mt-2 text-xs text-emerald-900/80 dark:text-emerald-100/90">{backupExportNote}</p> : null}
+          </div>
+        ) : null}
+      </Panel>
+
       <Panel title="Capacidades activables" subtitle="Hoja de ruta tecnica y comercial">
         <div className="space-y-3 text-sm text-slate-700 dark:text-zinc-300">
           {[
             'Facturacion electronica por pais y proveedor',
             'WhatsApp para notificaciones y reactivacion',
             'QR publico para menu digital por sucursal',
-            'Respaldos automaticos y bitacora de auditoria',
+            'Respaldos programados automaticos y bitacora de auditoria',
             'Soporte sin conexion con cola de sincronizacion',
           ].map((item) => (
             <div key={item} className="rounded-[20px] border border-slate-200 bg-white px-4 py-4 dark:border-white/10 dark:bg-white/[0.03]">

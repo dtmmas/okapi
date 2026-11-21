@@ -216,11 +216,18 @@ const activeOrders: Order[] = [
 ];
 
 const tables: RestaurantTable[] = [
-  { id: 1, code: 'M01', capacity: 4, area: 'Terraza', status: 'FREE' },
-  { id: 2, code: 'M04', capacity: 6, area: 'Salon principal', status: 'OCCUPIED', currentOrder: 'ORD-488' },
-  { id: 3, code: 'M08', capacity: 4, area: 'Salon principal', status: 'OCCUPIED', currentOrder: 'ORD-501' },
-  { id: 4, code: 'M11', capacity: 2, area: 'Barra', status: 'RESERVED' },
-  { id: 5, code: 'M14', capacity: 8, area: 'VIP', status: 'FREE' },
+  { id: 1, code: 'M01', capacity: 4, area: 'Terraza', sortOrder: 1, status: 'FREE' },
+  { id: 2, code: 'M04', capacity: 6, area: 'Salon principal', sortOrder: 1, status: 'OCCUPIED', currentOrder: 'ORD-488' },
+  { id: 3, code: 'M08', capacity: 4, area: 'Salon principal', sortOrder: 2, status: 'OCCUPIED', currentOrder: 'ORD-501' },
+  { id: 4, code: 'M11', capacity: 2, area: 'Barra', sortOrder: 1, status: 'RESERVED' },
+  { id: 5, code: 'M14', capacity: 8, area: 'VIP', sortOrder: 1, status: 'FREE' },
+];
+
+const tableAreas = [
+  { id: 1, name: 'Terraza', sortOrder: 1 },
+  { id: 2, name: 'Salon principal', sortOrder: 2 },
+  { id: 3, name: 'Barra', sortOrder: 3 },
+  { id: 4, name: 'VIP', sortOrder: 4 },
 ];
 
 const kitchenOrders: KitchenOrder[] = [
@@ -617,6 +624,7 @@ export const restaurantSnapshot: RestaurantSnapshot = {
   topProducts,
   activeOrders,
   tables,
+  tableAreas,
   kitchenOrders,
   barOrders,
   pastryOrders,

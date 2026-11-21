@@ -5,8 +5,9 @@ import { AppIcon } from '@/components/AppIcon';
 import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { StatusBadge } from '@/components/StatusBadge';
 import { TableCapacity } from '@/components/TableCapacity';
+import { TableCardMark } from '@/components/TableCardMark';
 import { getAreaIcon } from '@/lib/area-icons';
-import { getSortedAreas, normalizeAreaName } from '@/lib/tables';
+import { getSortedAreas, normalizeAreaName, sortTablesInArea } from '@/lib/tables';
 import { useSessionStore } from '@/store/useSessionStore';
 
 export default function CashierTablesPage() {
@@ -17,6 +18,7 @@ export default function CashierTablesPage() {
   const logout = useSessionStore((state) => state.logout);
 
   const tables = snapshot?.tables ?? [];
+  const tableAreas = snapshot?.tableAreas ?? [];
   const activeOrders = snapshot?.activeOrders ?? [];
   const cashShiftOpen = Boolean(snapshot?.cashShift?.isOpen);
   const currencySymbol = snapshot?.brand.currencySymbol ?? 'Q';
@@ -51,18 +53,12 @@ export default function CashierTablesPage() {
   const hasAccountsToCharge = activeOrders.some((order) => Boolean(order.tableCode));
   const occupiedTables = useMemo(
     () =>
-      tables
-        .filter((table) => Boolean(table.code ? orderByTableCode.get(table.code) : null))
-        .sort((left, right) => {
-          const leftOrder = left.code ? orderByTableCode.get(left.code) ?? null : null;
-          const rightOrder = right.code ? orderByTableCode.get(right.code) ?? null : null;
-          const leftPriority = leftOrder?.readyForPayment ? 1 : 0;
-          const rightPriority = rightOrder?.readyForPayment ? 1 : 0;
-          return rightPriority - leftPriority;
-        }),
+      sortTablesInArea(
+        tables.filter((table) => Boolean(table.code ? orderByTableCode.get(table.code) : null)),
+      ),
     [orderByTableCode, tables],
   );
-  const areaTabs = useMemo(() => getSortedAreas(occupiedTables.map((table) => table.area)), [occupiedTables]);
+  const areaTabs = useMemo(() => getSortedAreas(occupiedTables.map((table) => table.area), tableAreas), [occupiedTables, tableAreas]);
 
   useEffect(() => {
     if (!areaTabs.length) {
@@ -76,10 +72,10 @@ export default function CashierTablesPage() {
   }, [activeArea, areaTabs]);
 
   const visibleTables = useMemo(() => {
-    if (!activeArea) {
-      return occupiedTables;
-    }
-    return occupiedTables.filter((table) => normalizeAreaName(table.area) === activeArea);
+    const filtered = !activeArea
+      ? occupiedTables
+      : occupiedTables.filter((table) => normalizeAreaName(table.area) === activeArea);
+    return sortTablesInArea(filtered);
   }, [activeArea, occupiedTables]);
 
   const chargeCountByArea = useMemo(() => {
@@ -195,10 +191,13 @@ export default function CashierTablesPage() {
                 className={`w-full rounded-[28px] border p-5 text-left shadow-sm transition dark:shadow-none ${isReadyToCharge ? 'ring-2 ring-violet-400' : ''}`}
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Mesa</p>
-                    <p className="mt-2 table-code text-2xl text-slate-950 dark:text-white">{table.code}</p>
-                    <p className="mt-2 truncate text-[11px] text-slate-600 dark:text-zinc-400 sm:text-xs">{table.area}</p>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <TableCardMark status={table.status} size="sm" />
+                    <div className="min-w-0">
+                      <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Mesa</p>
+                      <p className="mt-2 table-code text-2xl text-slate-950 dark:text-white">{table.code}</p>
+                      <p className="mt-2 truncate text-[11px] text-slate-600 dark:text-zinc-400 sm:text-xs">{table.area}</p>
+                    </div>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {isReadyToCharge ? <StatusBadge value="BILL_REQUESTED" /> : null}

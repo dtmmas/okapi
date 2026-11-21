@@ -2,13 +2,15 @@ import type { PropsWithChildren, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 type PanelProps = PropsWithChildren<{
-  title: string;
+  title?: string;
   subtitle?: string;
   action?: ReactNode;
   className?: string;
 }>;
 
 export function Panel({ title, subtitle, action, className, children }: PanelProps) {
+  const showHeader = Boolean(title || subtitle || action);
+
   return (
     <section
       className={cn(
@@ -16,13 +18,17 @@ export function Panel({ title, subtitle, action, className, children }: PanelPro
         className,
       )}
     >
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <p className="font-display text-lg text-slate-950 dark:text-white">{title}</p>
-          {subtitle ? <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">{subtitle}</p> : null}
+      {showHeader ? (
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            {title ? <p className="font-display text-lg text-slate-950 dark:text-white">{title}</p> : null}
+            {subtitle ? (
+              <p className={cn('text-sm text-slate-600 dark:text-zinc-400', title ? 'mt-1' : '')}>{subtitle}</p>
+            ) : null}
+          </div>
+          {action}
         </div>
-        {action}
-      </div>
+      ) : null}
       {children}
     </section>
   );

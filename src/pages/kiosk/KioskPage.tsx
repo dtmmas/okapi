@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { TableCapacity } from '@/components/TableCapacity';
+import { TableCardMark } from '@/components/TableCardMark';
 import { getCategoryIcon } from '@/lib/menu-category-icon';
 import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
 import { createOrUpdateOrder, loginRequest, releaseTableReservationKeepalive, updateTableReservation } from '@/services/api';
@@ -431,7 +432,13 @@ export default function KioskPage() {
     const kioskKey = reservationKey();
     if (nextTableId) {
       await updateTableReservation({ tableId: nextTableId, status: 'RESERVED', kioskKey,
-        reservation: { name: customerName.trim(), address: customerAddress.trim(), guests: Number(guestCount) } });
+        reservation: {
+          name: customerName.trim(),
+          address: customerAddress.trim(),
+          guests: Number(guestCount),
+          ...(customerPhone.trim() ? { phone: customerPhone.trim() } : {}),
+        },
+      });
     }
 
     if (reservedTableId && reservedTableId !== nextTableId) {
@@ -1522,8 +1529,15 @@ export default function KioskPage() {
                       aria-pressed={selectedTableId === table.id}
                       className={`rounded-[24px] border px-4 py-4 text-left transition ${selectedTableId === table.id ? 'ring-2 ring-inset ring-slate-700 dark:ring-white' : ''}`}
                     >
-                      <p className="table-code text-2xl text-slate-950 dark:text-white">{table.code}</p>
-                      <div className="mt-2"><TableCapacity capacity={table.capacity} /></div>
+                      <div className="flex items-start gap-3">
+                        <TableCardMark status={table.status} size="sm" />
+                        <div className="min-w-0">
+                          <p className="table-code text-2xl text-slate-950 dark:text-white">{table.code}</p>
+                          <div className="mt-2">
+                            <TableCapacity capacity={table.capacity} />
+                          </div>
+                        </div>
+                      </div>
                       {Number(guestCount) > table.capacity && <p className="mt-1 text-xs">Cupo insuficiente</p>}
                     </button>
                   ))}

@@ -22,7 +22,16 @@ const items: Array<{
   { to: '/dashboard', label: 'Panel', icon: LayoutDashboard, permission: 'DASHBOARD_VIEW' },
   { to: '/pos', label: 'Punto de venta', icon: ShoppingCart, permission: 'POS_USE' },
   { to: '/kiosk', label: 'Kiosko', icon: MonitorSmartphone, permission: 'POS_USE' },
-  { to: '/mesas', label: 'Mesas', icon: UtensilsCrossed, permission: 'TABLES_MANAGE' },
+  {
+    to: '/mesas',
+    label: 'Mesas',
+    icon: UtensilsCrossed,
+    permission: 'TABLES_MANAGE',
+    children: [
+      { to: '/mesas?view=layout', label: 'Diseño gráfico de salón', queryKey: 'view', queryValue: 'layout' },
+      { to: '/mesas?view=operations', label: 'Operación de mesas', queryKey: 'view', queryValue: 'operations' },
+    ],
+  },
   { to: '/comandas', label: 'Comandas', icon: ChefHat, permission: 'KITCHEN_UPDATE' },
   {
     to: '/caja',

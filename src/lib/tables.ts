@@ -3,8 +3,47 @@ export function normalizeAreaName(area?: string | null) {
   return value && value.length > 0 ? value : 'Sin área';
 }
 
-export function getSortedAreas(areas: Array<string | null | undefined>) {
-  return Array.from(new Set(areas.map((area) => normalizeAreaName(area)))).sort((left, right) => left.localeCompare(right, 'es'));
+type AreaSortMeta = {
+  name: string;
+  sortOrder?: number | null;
+};
+
+export function sortAreaNames(
+  areas: Array<string | null | undefined>,
+  tableAreas?: AreaSortMeta[] | null,
+) {
+  const unique = Array.from(new Set(areas.map((area) => normalizeAreaName(area)).filter(Boolean)));
+  if (!tableAreas?.length) {
+    return unique.sort((left, right) => left.localeCompare(right, 'es'));
+  }
+
+  const orderByName = new Map(tableAreas.map((area) => [normalizeAreaName(area.name), area.sortOrder ?? 0]));
+  return unique.sort((left, right) => {
+    const orderLeft = orderByName.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const orderRight = orderByName.get(right) ?? Number.MAX_SAFE_INTEGER;
+    if (orderLeft !== orderRight) {
+      return orderLeft - orderRight;
+    }
+    return left.localeCompare(right, 'es');
+  });
+}
+
+export function getSortedAreas(
+  areas: Array<string | null | undefined>,
+  tableAreas?: AreaSortMeta[] | null,
+) {
+  return sortAreaNames(areas, tableAreas);
+}
+
+export function sortTablesInArea<T extends { sortOrder?: number; code?: string | null }>(tables: T[]) {
+  return [...tables].sort((left, right) => {
+    const orderLeft = left.sortOrder ?? 0;
+    const orderRight = right.sortOrder ?? 0;
+    if (orderLeft !== orderRight) {
+      return orderLeft - orderRight;
+    }
+    return (left.code ?? '').localeCompare(right.code ?? '', 'es');
+  });
 }
 
 function sanitizeArea(area: string) {

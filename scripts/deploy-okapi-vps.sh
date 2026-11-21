@@ -22,8 +22,19 @@ npm ci
 echo "Generando cliente Prisma..."
 npx prisma generate
 
-echo "Aplicando esquema de base de datos..."
-npx prisma db push
+echo "Aplicando migraciones aditivas..."
+if [[ -f scripts/table-sort-order.sql ]]; then
+  npx prisma db execute --file scripts/table-sort-order.sql --schema prisma/schema.prisma || true
+fi
+if [[ -f scripts/table-areas.sql ]]; then
+  npx prisma db execute --file scripts/table-areas.sql --schema prisma/schema.prisma || true
+fi
+if [[ -f scripts/table-reservation-observations.sql ]]; then
+  npx prisma db execute --file scripts/table-reservation-observations.sql --schema prisma/schema.prisma || true
+fi
+if [[ -f scripts/table-reservation-phone.sql ]]; then
+  npx prisma db execute --file scripts/table-reservation-phone.sql --schema prisma/schema.prisma || true
+fi
 
 echo "Compilando frontend..."
 npm run build

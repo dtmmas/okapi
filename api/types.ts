@@ -192,12 +192,19 @@ export type ReportsSummary = {
   appliedFilters: Required<ReportFilters>;
 };
 
+export type TableArea = {
+  id: number;
+  name: string;
+  sortOrder: number;
+};
+
 export type RestaurantTable = {
   id: number;
   branchId?: number | null;
   code: string;
   capacity: number;
   area: string;
+  sortOrder: number;
   status: TableStatus;
   currentOrder?: string;
   reservation?: import('../shared/table-reservation.js').TableReservationInfo;
@@ -448,6 +455,7 @@ export type RestaurantSnapshot = {
   topProducts: ProductPerformance[];
   activeOrders: Order[];
   tables: RestaurantTable[];
+  tableAreas: TableArea[];
   kitchenOrders: KitchenOrder[];
   barOrders: KitchenOrder[];
   pastryOrders: KitchenOrder[];

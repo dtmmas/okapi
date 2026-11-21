@@ -3,12 +3,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { ActiveUserLabel } from '@/components/ActiveUserLabel';
+import { AdminPanelBackButton } from '@/components/AdminPanelBackButton';
 import { StatusBadge } from '@/components/StatusBadge';
 import { TableCapacity } from '@/components/TableCapacity';
+import { TableCardMark } from '@/components/TableCardMark';
 import { TableStatusControl } from '@/components/TableReservationDetails';
 import { useTableRefresh } from '@/hooks/useTableRefresh';
 import { getAreaIcon } from '@/lib/area-icons';
-import { getSortedAreas, normalizeAreaName } from '@/lib/tables';
+import { getSortedAreas, normalizeAreaName, sortTablesInArea } from '@/lib/tables';
 import { useSessionStore } from '@/store/useSessionStore';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 
@@ -16,6 +18,7 @@ export default function PosTablesPage() {
   const navigate = useNavigate();
   const logout = useSessionStore((state) => state.logout);
   const tables = useSessionStore((state) => state.snapshot?.tables ?? []);
+  const tableAreas = useSessionStore((state) => state.snapshot?.tableAreas ?? []);
   const activeOrders = useSessionStore((state) => state.snapshot?.activeOrders ?? []);
   const refreshSnapshot = useSessionStore((state) => state.refreshSnapshot);
   const setTable = usePosWizardStore((state) => state.setTable);
@@ -26,7 +29,7 @@ export default function PosTablesPage() {
 
   useTableRefresh(refreshSnapshot);
 
-  const areaTabs = useMemo(() => getSortedAreas(tables.map((table) => table.area)), [tables]);
+  const areaTabs = useMemo(() => getSortedAreas(tables.map((table) => table.area), tableAreas), [tableAreas, tables]);
 
   useEffect(() => {
     if (!areaTabs.length) {
@@ -40,10 +43,10 @@ export default function PosTablesPage() {
   }, [activeArea, areaTabs]);
 
   const visibleTables = useMemo(() => {
-    if (!activeArea) {
-      return tables;
-    }
-    return tables.filter((table) => normalizeAreaName(table.area) === activeArea);
+    const filtered = !activeArea
+      ? tables
+      : tables.filter((table) => normalizeAreaName(table.area) === activeArea);
+    return sortTablesInArea(filtered);
   }, [activeArea, tables]);
 
   const accountCountByArea = useMemo(() => {
@@ -95,6 +98,7 @@ export default function PosTablesPage() {
             <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">Toca una mesa para abrir o continuar una cuenta.</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <AdminPanelBackButton />
             <ActiveUserLabel height="h-11 sm:h-12 lg:h-14" />
             <button
               type="button"
@@ -150,7 +154,7 @@ export default function PosTablesPage() {
         ) : null}
 
         {visibleTables.length ? (
-          <div className="isolate grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
+          <div className="isolate grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
           {visibleTables.map((table) => {
             const order = activeOrders.find((item) => item.tableCode === table.code);
             const isReadyToCharge = Boolean(order?.readyForPayment);
@@ -159,31 +163,33 @@ export default function PosTablesPage() {
               <div
                 key={table.id}
                 data-table-status={table.status}
-                className={`group relative top-0 flex min-h-[150px] flex-col justify-between rounded-[28px] border p-4 text-left shadow-sm transition-[top,background-color,border-color,box-shadow] hover:-top-0.5 dark:shadow-none sm:min-h-[170px] sm:p-5 lg:min-h-[200px] lg:p-6 2xl:min-h-[230px] ${isReadyToCharge ? 'ring-2 ring-violet-400' : ''}`}
+                className={`group relative rounded-[20px] border p-2.5 text-left shadow-sm transition-[background-color,border-color,box-shadow] dark:shadow-none sm:p-3 ${isReadyToCharge ? 'ring-2 ring-violet-400' : ''}`}
               >
-                <button type="button" aria-label={`Seleccionar mesa ${table.code}`}
-                  onClick={() => handleSelect(table.id)} className="absolute inset-0 rounded-[inherit]" />
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="table-code text-xl text-slate-950 dark:text-white sm:text-2xl lg:text-3xl">{table.code}</p>
-                    <p className="text-[11px] text-slate-500 dark:text-zinc-500 sm:text-xs">{table.area}</p>
+                <button
+                  type="button"
+                  aria-label={`Seleccionar mesa ${table.code}`}
+                  onClick={() => handleSelect(table.id)}
+                  className="absolute inset-0 z-0 rounded-[inherit]"
+                />
+                <div className="relative z-10 space-y-2 pointer-events-none">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
+                    {isReadyToCharge ? (
+                      <StatusBadge value="BILL_REQUESTED" className="px-2 py-0.5 text-[9px] tracking-[0.14em]" />
+                    ) : null}
+                    <TableStatusControl table={table} badgeClassName="px-2 py-0.5 text-[9px] tracking-[0.14em]" />
                   </div>
-                  <div className="flex flex-col items-end gap-2">
-                    {isReadyToCharge ? <StatusBadge value="BILL_REQUESTED" /> : null}
-                    <TableStatusControl table={table} />
+                  <div className="flex min-w-0 items-center gap-2">
+                    <TableCardMark status={table.status} size="xs" className="shadow-none" />
+                    <div className="min-w-0">
+                      <p className="table-code truncate text-lg text-slate-950 dark:text-white sm:text-xl">{table.code}</p>
+                      <div className="mt-1">
+                        <TableCapacity capacity={table.capacity} compact />
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="mt-2"><TableCapacity capacity={table.capacity} /></div>
-
-                <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700 dark:border-white/8 dark:bg-black/20 dark:text-zinc-200 sm:mt-6 sm:text-sm lg:text-base">
-                  <p className="text-center text-[11px] font-semibold text-slate-950 dark:text-white sm:text-xs">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-center text-[10px] font-semibold text-slate-950 dark:border-white/8 dark:bg-black/20 dark:text-white sm:text-[11px]">
                     {order?.code ?? 'Sin orden'}
-                  </p>
-                  {isReadyToCharge ? (
-                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-violet-700 dark:text-violet-300">
-                      Lista para cobrar
-                    </p>
-                  ) : null}
+                  </div>
                 </div>
               </div>
             );

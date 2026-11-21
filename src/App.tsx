@@ -47,6 +47,21 @@ const pageTitles: Record<string, { title: string; description: string }> = {
   '/configuracion': { title: 'Configuración central', description: 'Marca, seguridad y hoja de ruta del sistema.' },
 };
 
+function getMesasPageCopy(search: string) {
+  const view = new URLSearchParams(search).get('view');
+  if (view === 'operations') {
+    return {
+      title: 'Operación de mesas',
+      description: 'Traslado y unión de cuentas, y acceso al punto de venta.',
+    };
+  }
+
+  return {
+    title: 'Diseño gráfico de salón',
+    description: 'Organiza áreas del restaurante, crea mesas y visualiza su estado en el plano.',
+  };
+}
+
 function getMenuPageCopy(search: string, sectionNames: MenuCategory[]) {
   const params = new URLSearchParams(search);
   const view = params.get('view') ?? '';
@@ -78,9 +93,12 @@ function ProtectedLayout() {
     setSidebarOpen(false);
   }, [location.pathname]);
 
-  const copy = location.pathname === '/menu' && snapshot
-    ? getMenuPageCopy(location.search, buildMenuSectionRoots(snapshot.menuCategories))
-    : pageTitles[location.pathname] || pageTitles['/dashboard'];
+  const copy =
+    location.pathname === '/menu' && snapshot
+      ? getMenuPageCopy(location.search, buildMenuSectionRoots(snapshot.menuCategories))
+      : location.pathname === '/mesas'
+        ? getMesasPageCopy(location.search)
+        : pageTitles[location.pathname] || pageTitles['/dashboard'];
   const brand = snapshot?.brand;
 
   useEffect(() => {

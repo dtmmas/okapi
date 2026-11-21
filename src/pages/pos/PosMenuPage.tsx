@@ -3,11 +3,13 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { ActiveUserLabel } from '@/components/ActiveUserLabel';
+import { AdminPanelBackButton } from '@/components/AdminPanelBackButton';
 import { getCategoryIcon } from '@/lib/menu-category-icon';
 import { printReceipt } from '@/lib/printing/print-service';
 import { receiptItemNote } from '@/lib/printing/receipt-builders';
 import { StatusBadge } from '@/components/StatusBadge';
 import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
+import { getSortedAreas, normalizeAreaName, sortTablesInArea } from '@/lib/tables';
 import { createOrUpdateOrder, moveTableAccount, requestOrderBill } from '@/services/api';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -121,6 +123,7 @@ export default function PosMenuPage() {
   const [requestingBill, setRequestingBill] = useState(false);
 
   const tables = snapshot?.tables ?? [];
+  const tableAreas = snapshot?.tableAreas ?? [];
   const menuCategories = snapshot?.menuCategories ?? [];
   const menuProducts = snapshot?.menuProducts ?? [];
   const activeOrders = snapshot?.activeOrders ?? [];
@@ -396,6 +399,18 @@ export default function PosMenuPage() {
     () => tables.filter((table) => table.id !== tableId && table.status !== 'OCCUPIED'),
     [tables, tableId],
   );
+
+  const destinationTablesByArea = useMemo(() => {
+    const areaNames = getSortedAreas(
+      destinationTables.map((table) => table.area),
+      tableAreas,
+    );
+
+    return areaNames.map((areaName) => ({
+      area: areaName,
+      tables: sortTablesInArea(destinationTables.filter((table) => normalizeAreaName(table.area) === areaName)),
+    }));
+  }, [destinationTables, tableAreas]);
 
   async function handleSend() {
     if (!selectedTable) {
@@ -678,6 +693,7 @@ export default function PosMenuPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <AdminPanelBackButton />
             <button
               type="button"
               onClick={() => navigate('/pos/mesas')}
@@ -797,7 +813,7 @@ export default function PosMenuPage() {
           </div>
         </section>
 
-        <aside className="space-y-4 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden">
+        <aside className="flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
           <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:shrink-0 lg:p-6">
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Cuenta</p>
             <div className="mt-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-white/8 dark:bg-black/20 dark:text-zinc-200 sm:text-base lg:text-lg">
@@ -991,29 +1007,33 @@ export default function PosMenuPage() {
           </section>
 
           {activeOrder && destinationTables.length ? (
-            <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:shrink-0 lg:p-6">
+            <section className="mt-auto shrink-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:p-6">
               <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Mover cuenta</p>
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 space-y-2">
                 <select
                   value={moveToTableId ?? ''}
                   onChange={(event) => setMoveToTableId(event.target.value ? Number(event.target.value) : null)}
-                  className="h-12 flex-1 rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-emerald-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:h-14 sm:text-base lg:h-16 lg:text-lg"
+                  className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm leading-none text-slate-900 outline-none focus:border-emerald-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:h-12 sm:text-base lg:h-14"
                 >
                   <option value="">Mesa destino</option>
-                  {destinationTables.map((table) => (
-                    <option key={table.id} value={table.id}>
-                      {table.code} ({table.area})
-                    </option>
+                  {destinationTablesByArea.map((group) => (
+                    <optgroup key={group.area} label={group.area}>
+                      {group.tables.map((table) => (
+                        <option key={table.id} value={table.id}>
+                          {table.code}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 <button
                   type="button"
                   disabled={submitting || !moveToTableId}
                   onClick={() => void handleMoveTable()}
-                  className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-500/15 disabled:opacity-50 dark:text-white sm:h-14 sm:px-5 sm:text-base lg:h-16 lg:text-lg"
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-500/15 disabled:opacity-50 dark:text-white sm:h-12 sm:text-base lg:h-14"
                 >
                   <AppIcon icon={ArrowLeftRight} className="h-4 w-4" />
-                  Mover
+                  Mover cuenta
                 </button>
               </div>
             </section>

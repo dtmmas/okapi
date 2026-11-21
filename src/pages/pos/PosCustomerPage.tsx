@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { ActiveUserLabel } from '@/components/ActiveUserLabel';
+import { AdminPanelBackButton } from '@/components/AdminPanelBackButton';
 import { normalizePhone } from '@/lib/customers';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -122,6 +123,7 @@ export default function PosCustomerPage() {
             <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">Mesa: {table?.code ?? 'No seleccionada'}</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <AdminPanelBackButton />
             <ActiveUserLabel height="h-11 sm:h-12 lg:h-14" />
             <button
               type="button"

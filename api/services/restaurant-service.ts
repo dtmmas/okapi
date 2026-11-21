@@ -48,6 +48,7 @@ import type {
   ProductPerformance,
   RestaurantSnapshot,
   RestaurantTable,
+  TableArea,
   RoleCode,
   RoleProfileSummary,
   SalesPoint,
@@ -821,12 +822,42 @@ function buildStationOrders(orderRows: Array<any>, station: PreparationStation):
     .filter(Boolean);
 }
 
+async function syncTableAreasForTenant(tenantId: number) {
+  const [tableRows, areaRows] = await Promise.all([
+    prisma.restaurantTable.findMany({ where: { tenantId }, select: { area: true } }),
+    prisma.tableArea.findMany({ where: { tenantId }, orderBy: { sortOrder: 'asc' } }),
+  ]);
+
+  const namesFromTables = Array.from(new Set(tableRows.map((row) => normalizeTableArea(row.area))));
+  const existing = new Set(areaRows.map((row) => normalizeTableArea(row.name)));
+  let maxOrder = areaRows.reduce((max, row) => Math.max(max, row.sortOrder), 0);
+  const missing = namesFromTables.filter((name) => !existing.has(name)).sort((left, right) => left.localeCompare(right, 'es'));
+
+  if (!missing.length) {
+    return;
+  }
+
+  await prisma.$transaction(
+    missing.map((name, index) =>
+      prisma.tableArea.create({
+        data: {
+          tenantId,
+          name,
+          sortOrder: maxOrder + index + 1,
+        },
+      }),
+    ),
+  );
+}
+
 async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, showReservations: boolean): Promise<RestaurantSnapshot | null> {
   if (!(await canUseDatabase())) {
     return null;
   }
 
-  const [tenantRow, branchRows, categoryRows, productRows, orderRowsRaw, tableRows, customerRows] = await Promise.all([
+  await syncTableAreasForTenant(tenantId);
+
+  const [tenantRow, branchRows, categoryRows, productRows, orderRowsRaw, tableRows, tableAreaRows, customerRows] = await Promise.all([
     prisma.tenant.findUnique({ where: { id: tenantId } }),
     prisma.branch.findMany({ where: { tenantId }, orderBy: { id: 'asc' } }),
     prisma.category.findMany({ where: { tenantId }, orderBy: { id: 'asc' } }),
@@ -849,8 +880,9 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, 
         payments: true,
       },
     }),
-    prisma.restaurantTable.findMany({ where: { tenantId }, orderBy: { id: 'asc' },
-      include: { reservation: showReservations && { select: { name: true, address: true, guests: true, source: true } } } }),
+    prisma.restaurantTable.findMany({ where: { tenantId }, orderBy: [{ area: 'asc' }, { sortOrder: 'asc' }, { code: 'asc' }],
+      include: { reservation: showReservations && { select: { name: true, phone: true, address: true, guests: true, observations: true, source: true } } } }),
+    prisma.tableArea.findMany({ where: { tenantId }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
     prisma.customer.findMany({ where: { tenantId }, orderBy: { id: 'asc' } }),
   ]);
 
@@ -1023,6 +1055,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, 
       code: table.code,
       capacity: table.capacity,
       area: table.area,
+      sortOrder: table.sortOrder,
       status: table.status === PrismaTableStatus.RESERVED ? PrismaTableStatus.RESERVED : activeOrder ? PrismaTableStatus.OCCUPIED : PrismaTableStatus.FREE,
       currentOrder: activeOrder?.code,
       ...(table.status === 'RESERVED' && table.reservation && (!branchId || table.branchId === branchId)
@@ -1216,6 +1249,11 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, 
     topProducts,
     activeOrders,
     tables,
+    tableAreas: tableAreaRows.map((area): TableArea => ({
+      id: area.id,
+      name: area.name,
+      sortOrder: area.sortOrder,
+    })),
     kitchenOrders,
     barOrders,
     pastryOrders,
@@ -1907,6 +1945,12 @@ export async function createTableForUser(
     throw new Error('Ya existe una mesa con ese código en la sucursal seleccionada.');
   }
 
+  const lastInArea = await prisma.restaurantTable.findFirst({
+    where: { tenantId: user.tenantId, branchId, area },
+    orderBy: { sortOrder: 'desc' },
+    select: { sortOrder: true },
+  });
+
   return prisma.restaurantTable.create({
     data: {
       tenantId: user.tenantId,
@@ -1914,6 +1958,7 @@ export async function createTableForUser(
       code,
       area,
       capacity,
+      sortOrder: (lastInArea?.sortOrder ?? 0) + 1,
       status: PrismaTableStatus.FREE,
     },
   });
@@ -1954,7 +1999,7 @@ export async function updateTableForUser(
   return prisma.$transaction(async (tx) => {
     const table = await tx.restaurantTable.findFirst({
       where: { id: payload.tableId, tenantId: user.tenantId },
-      select: { id: true, branchId: true },
+      select: { id: true, branchId: true, area: true },
     });
 
     if (!table) {
@@ -1992,11 +2037,207 @@ export async function updateTableForUser(
       throw new Error('Ya existe una mesa con ese código en la sucursal seleccionada.');
     }
 
+    let sortOrder: number | undefined;
+    if (normalizeTableArea(table.area) !== normalizeTableArea(area) || table.branchId !== branchId) {
+      const lastInArea = await tx.restaurantTable.findFirst({
+        where: { tenantId: user.tenantId, branchId, area, id: { not: table.id } },
+        orderBy: { sortOrder: 'desc' },
+        select: { sortOrder: true },
+      });
+      sortOrder = (lastInArea?.sortOrder ?? 0) + 1;
+    }
+
     return tx.restaurantTable.update({
       where: { id: table.id },
-      data: { branchId, code, area, capacity },
+      data: {
+        branchId,
+        code,
+        area,
+        capacity,
+        ...(sortOrder !== undefined ? { sortOrder } : {}),
+      },
     });
   });
+}
+
+function normalizeTableArea(area: string) {
+  return area.trim();
+}
+
+export async function reorderTablesForUser(
+  user: SanitizedAuthUser,
+  payload: {
+    area: string;
+    tableIds: number[];
+  },
+) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const area = normalizeTableArea(payload.area);
+  const uniqueIds = Array.from(new Set(payload.tableIds));
+  if (!uniqueIds.length) {
+    throw new Error('Debes indicar al menos una mesa para ordenar.');
+  }
+
+  const rows = await prisma.restaurantTable.findMany({
+    where: { tenantId: user.tenantId, area, id: { in: uniqueIds } },
+    select: { id: true },
+  });
+
+  if (rows.length !== uniqueIds.length) {
+    throw new Error('Una o más mesas no pertenecen al área indicada.');
+  }
+
+  await prisma.$transaction(
+    uniqueIds.map((tableId, index) =>
+      prisma.restaurantTable.update({
+        where: { id: tableId },
+        data: { sortOrder: index + 1 },
+      }),
+    ),
+  );
+
+  return { success: true as const };
+}
+
+export async function createTableAreaForUser(user: SanitizedAuthUser, payload: { name: string }) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const name = normalizeTableArea(payload.name);
+  if (!name) {
+    throw new Error('El nombre del área es obligatorio.');
+  }
+
+  const existing = await prisma.tableArea.findFirst({
+    where: { tenantId: user.tenantId, name },
+  });
+  if (existing) {
+    return existing;
+  }
+
+  const lastArea = await prisma.tableArea.findFirst({
+    where: { tenantId: user.tenantId },
+    orderBy: { sortOrder: 'desc' },
+    select: { sortOrder: true },
+  });
+
+  return prisma.tableArea.create({
+    data: {
+      tenantId: user.tenantId,
+      name,
+      sortOrder: (lastArea?.sortOrder ?? 0) + 1,
+    },
+  });
+}
+
+export async function renameTableAreaForUser(user: SanitizedAuthUser, payload: { previousName: string; nextName: string }) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const previousName = normalizeTableArea(payload.previousName);
+  const nextName = normalizeTableArea(payload.nextName);
+  if (!nextName) {
+    throw new Error('El nombre del área es obligatorio.');
+  }
+  if (previousName === nextName) {
+    return { success: true as const };
+  }
+
+  const area = await prisma.tableArea.findFirst({
+    where: { tenantId: user.tenantId, name: previousName },
+    select: { id: true },
+  });
+  if (!area) {
+    throw new Error('Área no encontrada.');
+  }
+
+  const duplicate = await prisma.tableArea.findFirst({
+    where: { tenantId: user.tenantId, name: nextName, id: { not: area.id } },
+    select: { id: true },
+  });
+  if (duplicate) {
+    throw new Error('Ya existe un área con ese nombre.');
+  }
+
+  const tableRows = await prisma.restaurantTable.findMany({
+    where: { tenantId: user.tenantId },
+    select: { id: true, area: true },
+  });
+  const tableIds = tableRows
+    .filter((row) => normalizeTableArea(row.area) === previousName)
+    .map((row) => row.id);
+
+  await prisma.$transaction([
+    prisma.tableArea.update({ where: { id: area.id }, data: { name: nextName } }),
+    ...tableIds.map((tableId) =>
+      prisma.restaurantTable.update({ where: { id: tableId }, data: { area: nextName } }),
+    ),
+  ]);
+
+  return { success: true as const };
+}
+
+export async function deleteTableAreaForUser(user: SanitizedAuthUser, payload: { name: string }) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const name = normalizeTableArea(payload.name);
+  const hasTables = await prisma.restaurantTable.findFirst({
+    where: { tenantId: user.tenantId, area: name },
+    select: { id: true },
+  });
+  if (hasTables) {
+    throw new Error('No se puede eliminar un área mientras tenga mesas.');
+  }
+
+  const area = await prisma.tableArea.findFirst({
+    where: { tenantId: user.tenantId, name },
+    select: { id: true },
+  });
+  if (!area) {
+    return { success: true as const };
+  }
+
+  await prisma.tableArea.delete({ where: { id: area.id } });
+  return { success: true as const };
+}
+
+export async function reorderTableAreasForUser(user: SanitizedAuthUser, payload: { areaNames: string[] }) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  const areaNames = Array.from(new Set(payload.areaNames.map((name) => normalizeTableArea(name)).filter(Boolean)));
+  if (!areaNames.length) {
+    throw new Error('Debes indicar al menos un área para ordenar.');
+  }
+
+  const rows = await prisma.tableArea.findMany({
+    where: { tenantId: user.tenantId, name: { in: areaNames } },
+    select: { id: true, name: true },
+  });
+  if (rows.length !== areaNames.length) {
+    throw new Error('Una o más áreas no existen.');
+  }
+
+  const rowByName = new Map(rows.map((row) => [normalizeTableArea(row.name), row.id]));
+
+  await prisma.$transaction(
+    areaNames.map((name, index) =>
+      prisma.tableArea.update({
+        where: { id: rowByName.get(name)! },
+        data: { sortOrder: index + 1 },
+      }),
+    ),
+  );
+
+  return { success: true as const };
 }
 
 export async function deleteTableForUser(user: SanitizedAuthUser, tableId: number) {
@@ -2069,16 +2310,33 @@ export async function updateTableStatusForUser(
       const own = payload.source === 'KIOSK' && table.reservation?.kioskKey === payload.kioskKey && !!payload.kioskKey;
       if (table.status !== 'FREE' && !own) throw new Error('La mesa ya no está disponible.');
       await tx.restaurantTable.update({ where: { id: table.id }, data: { status } });
-      const data = { ...reservation, source: payload.source, kioskKey: payload.kioskKey ?? null };
+      const notes = reservation.observations?.trim() ?? '';
+      const phone = reservation.phone?.trim() ?? '';
+      const data = {
+        ...reservation,
+        phone: phone || null,
+        observations: notes || null,
+        source: payload.source,
+        kioskKey: payload.kioskKey ?? null,
+      };
       await tx.tableReservation.upsert({ where: { tableId: table.id }, create: { tableId: table.id, ...data }, update: data });
     } else {
       if (payload.source === 'KIOSK' && (!payload.kioskKey || table.reservation?.kioskKey !== payload.kioskKey)) {
         throw new Error('Esta reserva no pertenece a este kiosco.');
       }
+      const reason = payload.reason?.trim() ?? '';
+      if (payload.source === 'ADMIN' && !reason) {
+        throw new Error('Indica el motivo de la liberación.');
+      }
       await tx.tableReservation.deleteMany({ where: { tableId: table.id } });
       await tx.restaurantTable.update({ where: { id: table.id }, data: { status } });
+      if (table.status !== status) {
+        const reference = reason ? `Mesa #${table.id} · ${reason}` : `Mesa #${table.id}`;
+        await staffActivity(tx, user, table.branchId, 'Liberó mesa', reference);
+      }
+      return { success: true };
     }
-    if (table.status !== status) await staffActivity(tx, user, table.branchId, status === 'RESERVED' ? 'Reservó mesa' : 'Liberó mesa', `Mesa #${table.id}`);
+    if (table.status !== status) await staffActivity(tx, user, table.branchId, 'Reservó mesa', `Mesa #${table.id}`);
 
     return { success: true };
   }, { isolationLevel: 'Serializable' });
@@ -4179,6 +4437,121 @@ export async function moveOpenOrderToTable(
     await staffActivity(tx, user, order.branchId, 'Trasladó la cuenta', `${order.code} · Mesa #${originTable.id} a #${destinationTable.id}`);
 
     return { success: true };
+  });
+}
+
+const activeTableOrderStatuses: PrismaOrderStatus[] = [
+  PrismaOrderStatus.OPEN,
+  PrismaOrderStatus.IN_PREPARATION,
+  PrismaOrderStatus.READY,
+  PrismaOrderStatus.SERVED,
+];
+
+export async function mergeOpenOrdersToTable(
+  user: SanitizedAuthUser,
+  payload: {
+    hostTableId: number;
+    joinTableId: number;
+  },
+) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+
+  if (payload.hostTableId === payload.joinTableId) {
+    throw new Error('Selecciona otra mesa para unir.');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const hostTable = await tx.restaurantTable.findFirst({
+      where: { id: payload.hostTableId, tenantId: user.tenantId },
+      select: { id: true, branchId: true, code: true, status: true },
+    });
+    const joinTable = await tx.restaurantTable.findFirst({
+      where: { id: payload.joinTableId, tenantId: user.tenantId },
+      select: { id: true, branchId: true, code: true, status: true },
+    });
+
+    if (!hostTable || !joinTable) {
+      throw new Error('Una de las mesas no existe.');
+    }
+
+    if (hostTable.branchId !== joinTable.branchId) {
+      throw new Error('Las mesas deben ser de la misma sucursal.');
+    }
+
+    if (joinTable.status === PrismaTableStatus.RESERVED) {
+      throw new Error('No se puede unir una mesa reservada.');
+    }
+
+    const hostOrder = await tx.order.findFirst({
+      where: { tenantId: user.tenantId, tableId: hostTable.id, status: { in: activeTableOrderStatuses } },
+      orderBy: { createdAt: 'desc' },
+      include: { payments: { select: { id: true } } },
+    });
+
+    const joinOrder = await tx.order.findFirst({
+      where: { tenantId: user.tenantId, tableId: joinTable.id, status: { in: activeTableOrderStatuses } },
+      orderBy: { createdAt: 'desc' },
+      include: { payments: { select: { id: true } }, items: { select: { id: true } } },
+    });
+
+    if (!hostOrder) {
+      throw new Error('La mesa principal no tiene cuenta activa.');
+    }
+
+    if (!joinOrder?.items.length) {
+      throw new Error('La mesa a unir no tiene cuenta activa con productos.');
+    }
+
+    if (joinOrder.payments.length > 0) {
+      throw new Error('La cuenta de la mesa a unir tiene pagos registrados. Transfiere o cobra antes de unir.');
+    }
+
+    await tx.orderItem.updateMany({
+      where: { orderId: joinOrder.id },
+      data: { orderId: hostOrder.id },
+    });
+
+    const mergedItems = await tx.orderItem.findMany({
+      where: { orderId: hostOrder.id },
+      select: { quantity: true, unitPrice: true },
+    });
+    const mergedTotal = mergedItems.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitPrice), 0);
+
+    await tx.order.update({
+      where: { id: hostOrder.id },
+      data: { total: mergedTotal },
+    });
+
+    await tx.order.update({
+      where: { id: joinOrder.id },
+      data: {
+        status: PrismaOrderStatus.CANCELLED,
+        closedAt: new Date(),
+        total: 0,
+      },
+    });
+
+    await tx.restaurantTable.update({
+      where: { id: joinTable.id },
+      data: { status: PrismaTableStatus.FREE },
+    });
+
+    await tx.restaurantTable.update({
+      where: { id: hostTable.id },
+      data: { status: PrismaTableStatus.OCCUPIED },
+    });
+
+    await staffActivity(
+      tx,
+      user,
+      hostOrder.branchId,
+      'Unió mesas',
+      `${hostOrder.code} · ${hostTable.code} + ${joinTable.code}`,
+    );
+
+    return { success: true as const };
   });
 }
 
