@@ -2,7 +2,9 @@ import { ArrowLeft, Banknote, CreditCard, Landmark, Printer, Receipt, Split, Und
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { openReceiptPrintSession, printReceipt } from '@/lib/printing/print-service';
+import { receiptItemNote } from '@/lib/printing/receipt-builders';
 import { StatusBadge } from '@/components/StatusBadge';
 import { payOrder } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -114,13 +116,14 @@ export default function CashierCheckoutPage() {
     tableCode: string;
     orderCode: string;
     customerName: string;
-    lines: Array<{ quantity: number; product: string; notes?: string; lineTotal: number | null }>;
+    lines: Array<{ quantity: number; product: string; notes?: string; sentByName?: string | null; lineTotal: number | null }>;
     total: number;
     paymentAmount: number;
     paidAmount: number;
     pendingAmount: number;
     currencySymbol: string;
-    payments?: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>;
+    collectedByName?: string | null;
+    payments?: Array<{ method: Method | 'MIXED'; amount: number; collectedByName?: string | null; reference?: string | null; createdAt?: string }>;
     showPaymentsHistory?: boolean;
     showPaymentMeta?: boolean;
     footerLabel?: string;
@@ -144,7 +147,7 @@ export default function CashierCheckoutPage() {
           const paymentDate = payment.createdAt
             ? new Date(payment.createdAt).toLocaleString('es-GT', { dateStyle: 'short', timeStyle: 'short' })
             : '';
-          const lines = [formatMoney(payment.amount, payload.currencySymbol)];
+          const lines = [formatMoney(payment.amount, payload.currencySymbol), `Cobró: ${payment.collectedByName ?? 'Sin registrar'}`];
           if (paymentDate) {
             lines.push(paymentDate);
           }
@@ -186,6 +189,8 @@ export default function CashierCheckoutPage() {
       brandName,
       printedAt,
       metadata: [
+        { label: 'Abrió el pedido', value: order?.openedByName ?? 'Sin registrar' },
+        ...(payload.paymentAmount > 0 ? [{ label: 'Cobró', value: payload.collectedByName ?? 'Sin registrar' }] : []),
         { label: 'Mesa', value: payload.tableCode },
         { label: 'Cliente', value: payload.customerName },
         { label: 'Cuenta', value: payload.orderCode },
@@ -193,7 +198,7 @@ export default function CashierCheckoutPage() {
       items: payload.lines.map((item) => ({
         left: `${Number(item.quantity)} x ${item.product}`,
         right: item.lineTotal !== null ? formatMoney(item.lineTotal, payload.currencySymbol) : '',
-        note: item.notes,
+        note: receiptItemNote(item),
       })),
       summary: [
         { label: 'TOTAL CUENTA', value: formatMoney(payload.total, payload.currencySymbol) },
@@ -221,7 +226,7 @@ export default function CashierCheckoutPage() {
     };
   }
 
-  function buildFullAccountReceiptDocument(payments: Array<{ method: Method | 'MIXED'; amount: number; reference?: string | null; createdAt?: string }>) {
+  function buildFullAccountReceiptDocument(payments: Array<{ method: Method | 'MIXED'; amount: number; collectedByName?: string | null; reference?: string | null; createdAt?: string }>) {
     if (!order) {
       return null;
     }
@@ -232,14 +237,10 @@ export default function CashierCheckoutPage() {
       tableCode: table?.code ?? order.tableCode ?? '',
       orderCode: order.code,
       customerName: order.customerName || 'Consumidor final',
-      lines: lines.map((line) => ({
-        quantity: line.quantity,
-        product: line.product,
-        ...(line.notes ? { notes: line.notes } : {}),
-        lineTotal: line.lineTotal,
-      })),
+      lines,
       total,
       paymentAmount: payments.at(-1)?.amount ?? 0,
+      collectedByName: payments.at(-1)?.collectedByName,
       paidAmount: payments.reduce((sum, payment) => sum + payment.amount, 0),
       pendingAmount: Math.max(0, Number((total - payments.reduce((sum, payment) => sum + payment.amount, 0)).toFixed(2))),
       currencySymbol,
@@ -256,7 +257,7 @@ export default function CashierCheckoutPage() {
       return;
     }
 
-    const payments = paymentsOverride ?? order.payments;
+    const payments = [...(paymentsOverride ?? order.payments)].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
     const document = buildFullAccountReceiptDocument(payments);
     if (!document) {
       return;
@@ -315,20 +316,7 @@ export default function CashierCheckoutPage() {
       }
 
       let receiptDocument: ReceiptDocument | null = null;
-      const receiptLines =
-        splitMode === 'ITEMS' && selectedSplitLines.length
-          ? selectedSplitLines.map((line) => ({
-              quantity: line.quantity,
-              product: line.product,
-              ...(line.notes ? { notes: line.notes } : {}),
-              lineTotal: line.lineTotal,
-            }))
-          : lines.map((line) => ({
-              quantity: line.quantity,
-              product: line.product,
-              ...(line.notes ? { notes: line.notes } : {}),
-              lineTotal: line.lineTotal,
-            }));
+      const receiptLines = splitMode === 'ITEMS' && selectedSplitLines.length ? selectedSplitLines : lines;
 
       if (method === 'CASH') {
         const numericReceived = Number(receivedAmount);
@@ -357,6 +345,7 @@ export default function CashierCheckoutPage() {
           currencySymbol,
           receivedAmount: numericReceived,
           change: Math.max(0, numericReceived - amount),
+          collectedByName: result.collectedByName,
         });
 
         await refreshSnapshot();
@@ -367,7 +356,7 @@ export default function CashierCheckoutPage() {
         if (result.completed) {
           const completedPayments = [
             ...order.payments,
-            { method, amount: result.registeredAmount, reference: null, createdAt: new Date().toISOString() },
+            { method, amount: result.registeredAmount, collectedByName: result.collectedByName, reference: null, createdAt: new Date().toISOString() },
           ];
           if (window.confirm('Cuenta liquidada. Deseas imprimir la liquidacion final detallada con todos los abonos registrados?')) {
             await handlePrintFullAccount(completedPayments);
@@ -403,6 +392,7 @@ export default function CashierCheckoutPage() {
           pendingAmount: result.remainingAmount,
           currencySymbol,
           reference: normalizedReference,
+          collectedByName: result.collectedByName,
         });
 
         await refreshSnapshot();
@@ -413,7 +403,7 @@ export default function CashierCheckoutPage() {
         if (result.completed) {
           const completedPayments = [
             ...order.payments,
-            { method, amount: result.registeredAmount, reference: normalizedReference, createdAt: new Date().toISOString() },
+            { method, amount: result.registeredAmount, collectedByName: result.collectedByName, reference: normalizedReference, createdAt: new Date().toISOString() },
           ];
           if (window.confirm('Cuenta liquidada. Deseas imprimir la liquidacion final detallada con todos los abonos registrados?')) {
             await handlePrintFullAccount(completedPayments);
@@ -438,6 +428,7 @@ export default function CashierCheckoutPage() {
       <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6">
         <div className="mx-auto max-w-4xl rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
           <p className="text-sm text-slate-600 dark:text-zinc-400">No hay una cuenta activa para cobrar en esta mesa.</p>
+          <ActiveUserLabel height="h-12" />
           <button
             type="button"
             onClick={() => navigate('/cashier/mesas', { replace: true })}
@@ -465,8 +456,9 @@ export default function CashierCheckoutPage() {
               <StatusBadge value={order.status} />
               {order.readyForPayment ? <StatusBadge value="BILL_REQUESTED" /> : null}
             </div>
-            <p className="mt-2 text-xs uppercase tracking-[0.25em] text-amber-300">Cajero logeado: {user.name}</p>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+          <ActiveUserLabel height="h-11 sm:h-12 lg:h-14" />
           <button
             type="button"
             onClick={() => navigate('/cashier/mesas')}
@@ -475,6 +467,7 @@ export default function CashierCheckoutPage() {
             <AppIcon icon={ArrowLeft} className="h-4 w-4" />
             Volver a mesas
           </button>
+          </div>
         </div>
       </header>
 

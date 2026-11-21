@@ -1,4 +1,8 @@
 import { Panel } from '@/components/Panel';
+import { paperWidth, paperWidths, readPaperWidth, savePaperWidth } from '@/lib/printing/paper';
+import { printReceipt, receiptFormatter } from '@/lib/printing/print-service';
+import { buildReceiptHtml } from '@/lib/printing/receipt-builders';
+import { hasSunmiPrinterBridge } from '@/lib/printing/sunmi-print-provider';
 import { getBrandSettings, updateBrandSettings } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import { useEffect, useMemo, useState } from 'react';
@@ -7,6 +11,8 @@ export default function SettingsPage() {
   const snapshot = useSessionStore((state) => state.snapshot);
   const refreshSnapshot = useSessionStore((state) => state.refreshSnapshot);
   const [name, setName] = useState('');
+  const [stationLayout, setStationLayout] = useState('SEPARATE');
+  const [companyDetails, setCompanyDetails] = useState({ address: '', phone: '', slogan: '' });
   const [currencyCode, setCurrencyCode] = useState('GTQ');
   const [currencySymbol, setCurrencySymbol] = useState('Q');
   const [logoData, setLogoData] = useState<string | null>(null);
@@ -14,6 +20,29 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const nativePrinter = hasSunmiPrinterBridge();
+  const [width, setWidth] = useState(() => paperWidth(Math.min(readPaperWidth(), nativePrinter ? 80 : 112)));
+  const [printerMessage, setPrinterMessage] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(true);
+  const [previewHtml, setPreviewHtml] = useState('');
+  const formatPreview = useMemo(() => receiptFormatter(logoData), [width, logoData]);
+  const sample = useMemo(() => ({
+    brandName: name.trim() || 'Restaurante', title: 'PRUEBA DE IMPRESIÓN',
+    companyDetails,
+    printedAt: new Date().toLocaleString('es-GT'), metadata: [{ label: 'Ancho', value: `${width} mm` }],
+    items: [{ left: 'Producto de ejemplo', right: `${currencySymbol.trim()} 12.50`.trim() }],
+    footerLabel: 'PRUEBA SIN VALOR COMERCIAL',
+  }), [width, name, currencySymbol, companyDetails]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    let active = true;
+    void formatPreview(sample).then(document => {
+      if (active) setPreviewHtml(buildReceiptHtml(document, 'preview'));
+    });
+    return () => { active = false; };
+  }, [previewOpen, sample, formatPreview]);
 
   const currencyOptions = useMemo(
     () => [
@@ -37,6 +66,8 @@ export default function SettingsPage() {
     void getBrandSettings()
       .then((brand) => {
         setName(brand.name);
+        setStationLayout(brand.stationLayout ?? 'SEPARATE');
+        setCompanyDetails({ address: brand.address ?? '', phone: brand.phone ?? '', slogan: brand.slogan ?? '' });
         setCurrencyCode(brand.currencyCode);
         setCurrencySymbol(brand.currencySymbol);
         setLogoData(brand.logoData ?? null);
@@ -60,7 +91,8 @@ export default function SettingsPage() {
     try {
       await updateBrandSettings({
         name,
-        slogan: snapshot.brand.slogan,
+        ...companyDetails,
+        stationLayout,
         currencyCode,
         currencySymbol,
         logoData,
@@ -76,11 +108,62 @@ export default function SettingsPage() {
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-      <Panel title="Restaurante" subtitle="Nombre, moneda y logo">
+      <Panel title="Impresora de tickets" subtitle="Preferencia de este navegador o terminal">
+        <label className="block text-sm">Ancho del rollo
+          <select value={width} onChange={event => {
+            const next = paperWidth(event.target.value);
+            try {
+              savePaperWidth(next);
+              setWidth(next);
+              setPrinterMessage(`Guardado en este equipo: ${next} mm.`);
+            } catch { setPrinterMessage('No se pudo guardar la preferencia en este equipo.'); }
+          }} className="mt-2 h-12 w-full rounded-2xl border px-4 dark:bg-zinc-900">
+            {paperWidths.filter(mm => !nativePrinter || mm <= 80).map(mm =>
+              <option key={mm} value={mm}>{mm} mm{mm === 80 ? ' (predeterminado)' : ''}</option>)}
+          </select>
+        </label>
+        <p className="my-3 text-sm text-slate-600 dark:text-zinc-400">
+          Elige el ancho que admite tu impresora. {nativePrinter ? 'Este ajuste no cambia el tamaño físico del rollo.' : 'En el diálogo de impresión, selecciona la impresora y el mismo tamaño de papel.'}
+        </p>
+        <button type="button" aria-expanded={previewOpen}
+          className="mr-2 rounded-xl border px-4 py-2" onClick={() => setPreviewOpen(open => !open)}>
+          {previewOpen ? 'Ocultar vista previa' : 'Vista previa'}
+        </button>
+        <button type="button" disabled={testing} className="rounded-xl border px-4 py-2" onClick={async () => {
+          setTesting(true);
+          setPrinterMessage('');
+          try {
+            await printReceipt({ ...sample, printedAt: new Date().toLocaleString('es-GT') }, logoData);
+            setPrinterMessage('Prueba enviada al sistema de impresión.');
+          } catch (error) { setPrinterMessage(error instanceof Error ? error.message : 'No se pudo imprimir la prueba.'); }
+          finally { setTesting(false); }
+        }}>{testing ? 'Enviando…' : 'Imprimir prueba'}</button>
+        <p role="status" className="mt-2 text-sm">{printerMessage}</p>
+        {previewOpen && <div className="mt-4 min-w-0 rounded-xl bg-slate-100 p-3 dark:bg-zinc-800">
+          <p className="mb-2 text-sm">Vista previa en vivo · Rollo de {width} mm</p>
+          <div className="overflow-x-auto">
+            {previewHtml ? <iframe title={`Ticket de prueba de ${width} mm`} sandbox="" srcDoc={previewHtml}
+              style={{ width: `${width}mm` }} className="mx-auto block h-96 border-0 bg-white shadow-sm" />
+              : <p role="status">Preparando ticket…</p>}
+          </div>
+        </div>}
+      </Panel>
+      <Panel title="Restaurante" subtitle="Datos de la empresa, moneda y logo">
         {loading ? (
           <p className="text-sm text-slate-600 dark:text-zinc-400">Cargando configuracion...</p>
         ) : (
           <div className="space-y-4">
+            <label className="block text-sm">Pantallas de preparación
+              <select value={stationLayout} onChange={event => setStationLayout(event.target.value)}
+                className="mt-2 h-12 w-full rounded-2xl border px-4 dark:bg-zinc-900">
+                <option value="SEPARATE">Áreas separadas</option>
+                <option value="BAR_PASTRY">Barra + Pastelería</option>
+                <option value="KITCHEN_BAR">Cocina + Barra</option>
+                <option value="KITCHEN_PASTRY">Cocina + Pastelería</option>
+                <option value="ALL">Cocina + Barra + Pastelería</option>
+              </select>
+              <span className="mt-1 block text-xs">Los usuarios de las áreas unidas ven y atienden las mismas comandas. Las demás áreas siguen separadas.</span>
+            </label>
             <label className="block">
               <span className="mb-2 block text-sm text-slate-600 dark:text-zinc-400">Nombre del restaurante</span>
               <input
@@ -90,6 +173,21 @@ export default function SettingsPage() {
                 placeholder="Restaurante"
               />
             </label>
+            {([
+              ['address', 'Dirección', 250],
+              ['phone', 'Número de teléfono', 40],
+              ['slogan', 'Eslogan', 160],
+            ] as const).map(([key, label, limit]) => (
+              <label key={key} className="block">
+                <span className="mb-2 block text-sm text-slate-600 dark:text-zinc-400">{label} (opcional)</span>
+                <input type={key === 'phone' ? 'tel' : 'text'} maxLength={limit} value={companyDetails[key]}
+                  onChange={event => {
+                    const value = event.target.value;
+                    setCompanyDetails(previous => ({ ...previous, [key]: value }));
+                  }}
+                  className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm dark:border-white/10 dark:bg-white/5" />
+              </label>
+            ))}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="block">

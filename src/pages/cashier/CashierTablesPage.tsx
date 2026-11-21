@@ -2,7 +2,9 @@ import { RotateCw } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { StatusBadge } from '@/components/StatusBadge';
+import { TableCapacity } from '@/components/TableCapacity';
 import { getAreaIcon } from '@/lib/area-icons';
 import { getSortedAreas, normalizeAreaName } from '@/lib/tables';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -127,10 +129,11 @@ export default function CashierTablesPage() {
             >
               Caja
             </button>
+            <ActiveUserLabel height="h-11 sm:h-12 lg:h-14" />
             <button
               type="button"
               onClick={logout}
-              className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
+              className="session-exit h-11 rounded-2xl border px-4 text-sm font-semibold transition sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
             >
               Salir
             </button>
@@ -178,7 +181,7 @@ export default function CashierTablesPage() {
           </div>
         ) : null}
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className="isolate grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {visibleTables.map((table) => {
             const order = table.code ? orderByTableCode.get(table.code) ?? null : null;
             const isReadyToCharge = Boolean(order?.readyForPayment);
@@ -188,30 +191,25 @@ export default function CashierTablesPage() {
                 key={table.id}
                 type="button"
                 onClick={() => navigate(`/cashier/cobrar/${table.id}`)}
-                className={`w-full rounded-[28px] border bg-white p-5 text-left shadow-sm transition hover:bg-slate-50 dark:bg-zinc-950/45 dark:shadow-none dark:hover:bg-zinc-950/60 ${
-                  isReadyToCharge
-                    ? 'border-violet-300/40 ring-2 ring-violet-300/15 dark:border-violet-400/30 dark:ring-violet-400/10'
-                    : 'border-slate-200 dark:border-white/10'
-                }`}
+                data-table-status={table.status}
+                className={`w-full rounded-[28px] border p-5 text-left shadow-sm transition dark:shadow-none ${isReadyToCharge ? 'ring-2 ring-violet-400' : ''}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Mesa</p>
-                    <p className="mt-2 font-display text-3xl text-slate-950 dark:text-white">{table.code}</p>
-                    <p className="mt-2 truncate text-sm text-slate-600 dark:text-zinc-400">{table.area}</p>
+                    <p className="mt-2 table-code text-2xl text-slate-950 dark:text-white">{table.code}</p>
+                    <p className="mt-2 truncate text-[11px] text-slate-600 dark:text-zinc-400 sm:text-xs">{table.area}</p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {isReadyToCharge ? <StatusBadge value="BILL_REQUESTED" /> : null}
-                    <StatusBadge value={table.status} />
+                    <StatusBadge value={table.status} className="relative z-10" />
                   </div>
                 </div>
+                <div className="mt-2"><TableCapacity capacity={table.capacity} /></div>
 
                 {order ? (
                   <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-white/8 dark:bg-black/20 dark:text-zinc-200 sm:text-base">
-                    <p className="flex items-center justify-between gap-3">
-                      <span className="text-slate-500 dark:text-zinc-400">Cuenta</span>
-                      <span className="font-semibold text-slate-950 dark:text-white">{order.code}</span>
-                    </p>
+                    <p className="text-center text-[11px] font-semibold text-slate-950 dark:text-white sm:text-xs">{order.code}</p>
                     <div className="mt-2 flex items-center justify-between gap-3">
                       <span className="text-slate-500 dark:text-zinc-400">Estado de servicio</span>
                       <StatusBadge value={order.status} />

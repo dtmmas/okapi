@@ -1,8 +1,12 @@
-import { LogOut, UtensilsCrossed } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { StatusBadge } from '@/components/StatusBadge';
+import { TableCapacity } from '@/components/TableCapacity';
+import { TableStatusControl } from '@/components/TableReservationDetails';
+import { useTableRefresh } from '@/hooks/useTableRefresh';
 import { getAreaIcon } from '@/lib/area-icons';
 import { getSortedAreas, normalizeAreaName } from '@/lib/tables';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -20,9 +24,7 @@ export default function PosTablesPage() {
   const [activeArea, setActiveArea] = useState<string>('');
   const [selectionError, setSelectionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void refreshSnapshot();
-  }, [refreshSnapshot]);
+  useTableRefresh(refreshSnapshot);
 
   const areaTabs = useMemo(() => getSortedAreas(tables.map((table) => table.area)), [tables]);
 
@@ -64,7 +66,7 @@ export default function PosTablesPage() {
     }
 
     if (table.status === 'RESERVED') {
-      setSelectionError(`La mesa ${table.code} está siendo usada en el kiosko. Espera a que el cliente termine o elige otra mesa.`);
+      setSelectionError(`La mesa ${table.code} está reservada. Elige otra mesa o consulta con Administración.`);
       return;
     }
 
@@ -93,17 +95,11 @@ export default function PosTablesPage() {
             <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">Toca una mesa para abrir o continuar una cuenta.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
-            >
-              Panel
-            </button>
+            <ActiveUserLabel height="h-11 sm:h-12 lg:h-14" />
             <button
               type="button"
               onClick={logout}
-              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 text-sm font-semibold text-rose-900 transition hover:bg-rose-500/15 dark:text-white sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
+              className="session-exit inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-semibold transition sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
             >
               <AppIcon icon={LogOut} className="h-4 w-4" />
               Cerrar sesión
@@ -154,58 +150,42 @@ export default function PosTablesPage() {
         ) : null}
 
         {visibleTables.length ? (
-          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
+          <div className="isolate grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
           {visibleTables.map((table) => {
             const order = activeOrders.find((item) => item.tableCode === table.code);
             const isReadyToCharge = Boolean(order?.readyForPayment);
-            const isReservedForKiosk = table.status === 'RESERVED';
 
             return (
-              <button
+              <div
                 key={table.id}
-                type="button"
-                onClick={() => handleSelect(table.id)}
-                className={`group flex min-h-[150px] flex-col justify-between rounded-[28px] border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-50 dark:bg-white/[0.03] dark:shadow-none dark:hover:bg-white/[0.05] sm:min-h-[170px] sm:p-5 lg:min-h-[200px] lg:p-6 2xl:min-h-[230px] ${
-                  isReadyToCharge
-                    ? 'border-violet-300/40 ring-2 ring-violet-300/15 dark:border-violet-400/30 dark:ring-violet-400/10'
-                    : isReservedForKiosk
-                      ? 'border-sky-300/40 bg-sky-50/80 dark:border-sky-400/30 dark:bg-sky-500/5'
-                    : 'border-slate-200 hover:border-amber-300/25 dark:border-white/10'
-                }`}
+                data-table-status={table.status}
+                className={`group relative top-0 flex min-h-[150px] flex-col justify-between rounded-[28px] border p-4 text-left shadow-sm transition-[top,background-color,border-color,box-shadow] hover:-top-0.5 dark:shadow-none sm:min-h-[170px] sm:p-5 lg:min-h-[200px] lg:p-6 2xl:min-h-[230px] ${isReadyToCharge ? 'ring-2 ring-violet-400' : ''}`}
               >
+                <button type="button" aria-label={`Seleccionar mesa ${table.code}`}
+                  onClick={() => handleSelect(table.id)} className="absolute inset-0 rounded-[inherit]" />
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 sm:h-12 sm:w-12 lg:h-14 lg:w-14 dark:border-white/10 dark:bg-black/30">
-                      <AppIcon icon={UtensilsCrossed} className="h-4 w-4 text-amber-300/90 sm:h-5 sm:w-5 lg:h-6 lg:w-6" />
-                    </div>
-                    <div>
-                      <p className="font-display text-2xl text-slate-950 dark:text-white sm:text-3xl lg:text-4xl">{table.code}</p>
-                      <p className="text-xs text-slate-500 dark:text-zinc-500 sm:text-sm lg:text-base">{table.area}</p>
-                    </div>
+                  <div>
+                    <p className="table-code text-xl text-slate-950 dark:text-white sm:text-2xl lg:text-3xl">{table.code}</p>
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-500 sm:text-xs">{table.area}</p>
                   </div>
                   <div className="flex flex-col items-end gap-2">
                     {isReadyToCharge ? <StatusBadge value="BILL_REQUESTED" /> : null}
-                    <StatusBadge value={table.status} />
+                    <TableStatusControl table={table} />
                   </div>
                 </div>
+                <div className="mt-2"><TableCapacity capacity={table.capacity} /></div>
 
                 <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700 dark:border-white/8 dark:bg-black/20 dark:text-zinc-200 sm:mt-6 sm:text-sm lg:text-base">
-                  <p className="flex items-center justify-between gap-4">
-                    <span className="text-slate-500 dark:text-zinc-400">Cuenta</span>
-                    <span className="font-semibold text-slate-950 dark:text-white">{order?.code ?? 'Sin cuenta'}</span>
+                  <p className="text-center text-[11px] font-semibold text-slate-950 dark:text-white sm:text-xs">
+                    {order?.code ?? 'Sin orden'}
                   </p>
-                  {isReservedForKiosk ? (
-                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-700 dark:text-sky-300">
-                      Reservada por kiosko
-                    </p>
-                  ) : null}
                   {isReadyToCharge ? (
                     <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-violet-700 dark:text-violet-300">
                       Lista para cobrar
                     </p>
                   ) : null}
                 </div>
-              </button>
+              </div>
             );
           })}
           </div>

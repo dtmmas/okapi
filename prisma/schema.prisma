@@ -16,6 +16,7 @@ enum RoleCode {
   BAR
   PASTRY
   DELIVERY
+  KIOSK
 }
 
 enum PermissionMode {
@@ -96,6 +97,10 @@ enum PreparationStatus {
 }
 
 model Tenant {
+  stationLayout String @default("SEPARATE") @db.VarChar(24)
+  address   String? @db.VarChar(250)
+  phone     String? @db.VarChar(40)
+  slogan    String? @db.VarChar(160)
   id        Int      @id @default(autoincrement())
   name      String
   currencyCode String @default("GTQ")
@@ -215,13 +220,25 @@ model RestaurantTable {
   code       String
   area       String
   capacity   Int
+  imageUrl   String?     @db.VarChar(255)
   status     TableStatus @default(FREE)
+  reservation TableReservation?
   createdAt  DateTime    @default(now())
   tenant     Tenant      @relation(fields: [tenantId], references: [id])
   branch     Branch      @relation(fields: [branchId], references: [id])
   orders     Order[]
 
   @@unique([branchId, code])
+}
+
+model TableReservation {
+  tableId Int @id
+  table RestaurantTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  source String @db.VarChar(8)
+  name String @db.VarChar(150)
+  address String @db.VarChar(250)
+  guests Int
+  kioskKey String? @db.VarChar(64)
 }
 
 model Customer {
@@ -239,6 +256,7 @@ model Customer {
 }
 
 model Order {
+  openedByName String?
   id          Int         @id @default(autoincrement())
   tenantId    Int
   branchId    Int
@@ -267,6 +285,8 @@ model Order {
 }
 
 model OrderItem {
+  sentById   Int?
+  sentByName String?
   id        Int      @id @default(autoincrement())
   orderId   Int
   productId Int
@@ -283,6 +303,7 @@ model OrderItem {
 }
 
 model Payment {
+  collectedByName String?
   id        Int           @id @default(autoincrement())
   orderId    Int
   method    PaymentMethod
@@ -292,6 +313,21 @@ model Payment {
   appliedItems String?    @db.MediumText
   createdAt DateTime      @default(now())
   order     Order         @relation(fields: [orderId], references: [id])
+}
+
+model StaffActivity {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  branchId  Int
+  actorId   Int
+  actorName String
+  actorRole RoleCode
+  action    String
+  reference String
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, branchId, actorId, createdAt])
 }
 
 model CashShift {

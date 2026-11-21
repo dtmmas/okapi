@@ -1,27 +1,14 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, ShieldCheck, Store, UtensilsCrossed } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { applyBrowserBrand } from '@/lib/browser-brand';
 import { useSessionStore } from '@/store/useSessionStore';
-import { getPostLoginPath } from '@/lib/session-routing';
 import { getPublicBrand } from '@/services/api';
 
-const demoAccounts = [
-  { role: 'Administrador', email: 'admin@restaurante.gt', password: 'Admin123*' },
-  { role: 'Supervisor', email: 'supervisor@restaurante.gt', password: 'Supervisor123*' },
-  { role: 'Cajero', email: 'cajero@restaurante.gt', password: 'Caja123*' },
-  { role: 'Mesero', email: 'mesero@restaurante.gt', password: 'Mesero123*' },
-  { role: 'Cocina', email: 'cocina@restaurante.gt', password: 'Cocina123*' },
-  { role: 'Bar', email: 'bar@restaurante.gt', password: 'Bar123456*' },
-  { role: 'Pastelería', email: 'pasteleria@restaurante.gt', password: 'Pastel123*' },
-];
-
 export default function LoginPage() {
-  const navigate = useNavigate();
   const { login, loading, error } = useSessionStore();
-  const [email, setEmail] = useState(demoAccounts[0].email);
-  const [password, setPassword] = useState(demoAccounts[0].password);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [brandName, setBrandName] = useState('Restaurante');
   const [logoData, setLogoData] = useState<string | null>(null);
 
@@ -44,9 +31,7 @@ export default function LoginPage() {
     event.preventDefault();
 
     try {
-      await login(email, password);
-      const user = useSessionStore.getState().user;
-      navigate(user ? getPostLoginPath(user) : '/dashboard');
+      await login(email.trim().toLowerCase(), password);
     } catch {
       return;
     }
@@ -94,16 +79,20 @@ export default function LoginPage() {
         <section className="rounded-[36px] border border-slate-200/80 bg-white/90 p-8 shadow-[0_24px_120px_rgba(15,23,42,0.12)] backdrop-blur-2xl dark:border-white/10 dark:bg-black/25 dark:shadow-[0_24px_120px_rgba(0,0,0,0.55)]">
           <p className="text-xs uppercase tracking-[0.4em] text-slate-500 dark:text-zinc-500">Acceso seguro</p>
           <h2 className="mt-4 font-display text-4xl text-slate-950 dark:text-white">Iniciar sesion</h2>
-          <p className="mt-3 text-sm text-slate-600 dark:text-zinc-400">Usa una cuenta demo o ingresa tus credenciales para explorar el sistema completo.</p>
+          <p className="mt-3 text-sm text-slate-600 dark:text-zinc-400">Ingresa el correo y la contraseña de tu cuenta.</p>
 
           <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
             <label className="block">
               <span className="mb-2 block text-sm text-slate-600 dark:text-zinc-400">Correo</span>
               <input
+                type="email"
+                name="email"
+                autoComplete="username"
+                required
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-slate-900 outline-none transition focus:border-amber-300/50 dark:border-white/10 dark:bg-white/5 dark:text-white"
-                placeholder="admin@restaurante.gt"
+                placeholder="tu@correo.com"
               />
             </label>
 
@@ -111,6 +100,9 @@ export default function LoginPage() {
               <span className="mb-2 block text-sm text-slate-600 dark:text-zinc-400">Contrasena</span>
               <input
                 type="password"
+                name="password"
+                autoComplete="current-password"
+                required
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-slate-900 outline-none transition focus:border-amber-300/50 dark:border-white/10 dark:bg-white/5 dark:text-white"
@@ -130,26 +122,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <div className="mt-8 space-y-3">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-zinc-500">Cuentas demo</p>
-            {demoAccounts.map((account) => (
-              <button
-                key={account.email}
-                type="button"
-                onClick={() => {
-                  setEmail(account.email);
-                  setPassword(account.password);
-                }}
-                className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-amber-300/30 hover:bg-amber-50 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-slate-950 dark:text-white">{account.role}</p>
-                  <p className="text-xs text-slate-500 dark:text-zinc-500">{account.email}</p>
-                </div>
-                <span className="text-xs uppercase tracking-[0.22em] text-amber-300">Cargar</span>
-              </button>
-            ))}
-          </div>
         </section>
       </div>
     </main>

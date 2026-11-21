@@ -540,6 +540,19 @@ export default function ReportsPage() {
           </div>
         </Panel>
       </section>
+      <Panel title="Actividad del personal" subtitle="Últimos 200 movimientos según los filtros. Aquí el usuario es quien realizó la acción.">
+        <ul className="max-h-96 divide-y divide-slate-200 overflow-y-auto dark:divide-white/10">
+          {reportData?.activity?.map(event => (
+            <li key={event.id} className="py-3 text-sm">
+              <strong>{event.actorName}</strong> · {event.action} · {event.reference}
+              <div className="text-slate-500 dark:text-zinc-400">
+                {new Date(event.createdAt).toLocaleString('es-GT')} · {snapshot.branches.find(b => b.id === event.branchId)?.name ?? `Sucursal ${event.branchId}`} · {event.actorRole}
+              </div>
+            </li>
+          ))}
+        </ul>
+        {reportData && !reportData.activity?.length && <p>Sin actividad registrada para estos filtros.</p>}
+      </Panel>
     </div>
   );
 }

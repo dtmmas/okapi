@@ -146,13 +146,9 @@ export function Sidebar({ permissions, brandName, logoData, menuCategories, mobi
         </button>
       </div>
 
-      <div className="rounded-[24px] border border-slate-200/80 bg-white/90 p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none">
-        <div className="flex flex-col items-center text-center">
-          {logoData ? <img src={logoData} alt={brandName} className="h-16 w-16 rounded-[20px] bg-slate-100 object-contain dark:bg-black/30" /> : null}
-          <div className="mt-3 min-w-0">
-            <p className="truncate font-display text-2xl text-slate-950 dark:text-white">{brandName}</p>
-          </div>
-        </div>
+      <div className="flex w-full shrink-0 flex-col items-center gap-2 rounded-[24px] border border-slate-200/80 bg-white/90 px-4 py-4 text-center shadow-sm dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none">
+        {logoData ? <img src={logoData} alt="" className="h-16 w-full object-contain object-center" /> : null}
+        <p className="w-full break-words font-display text-xl leading-tight text-slate-950 dark:text-white">{brandName}</p>
       </div>
 
       <nav className="mt-6 space-y-2 pb-4">

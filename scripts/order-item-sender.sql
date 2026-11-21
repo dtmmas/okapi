@@ -1,0 +1,3 @@
+ALTER TABLE `OrderItem`
+  ADD COLUMN `sentById` INTEGER NULL,
+  ADD COLUMN `sentByName` VARCHAR(191) NULL;

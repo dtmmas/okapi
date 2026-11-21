@@ -1,5 +1,6 @@
 import { Menu, MoonStar, SunMedium, LogOut } from 'lucide-react';
 import { AppIcon } from '@/components/AppIcon';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { useTheme } from '@/hooks/useTheme';
 import type { AuthUser } from '@/types/restaurant';
 
@@ -31,14 +32,14 @@ export function Topbar({ user, branchName, onLogout, onMenuToggle }: TopbarProps
           <div>
             <p className="font-display text-xl text-slate-950 dark:text-white">{branchName}</p>
             <p className="text-sm text-slate-600 dark:text-zinc-400">
-              {user.name} · {user.role}
+              {user.role}
             </p>
           </div>
         </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={toggleTheme}
@@ -47,11 +48,11 @@ export function Topbar({ user, branchName, onLogout, onMenuToggle }: TopbarProps
           {isDark ? <AppIcon icon={SunMedium} className="h-4 w-4" /> : <AppIcon icon={MoonStar} className="h-4 w-4" />}
           {isDark ? 'Modo claro' : 'Modo oscuro'}
         </button>
-
+        <ActiveUserLabel />
         <button
           type="button"
           onClick={onLogout}
-          className="inline-flex h-11 items-center gap-2 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 text-sm text-rose-200 transition hover:bg-rose-500/20"
+          className="session-exit inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm transition"
         >
           <AppIcon icon={LogOut} className="h-4 w-4" />
           Salir

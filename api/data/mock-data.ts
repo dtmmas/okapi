@@ -23,6 +23,7 @@ import type {
 } from '../types.js';
 
 const rolePermissions: Record<RoleCode, PermissionCode[]> = {
+  KIOSK: ['KIOSK_ONLY'],
   ADMIN: [
     'DASHBOARD_VIEW',
     'POS_USE',

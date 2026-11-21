@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import multer from 'multer';
 import { Router } from 'express';
 import { z } from 'zod';
+import { layouts } from '../lib/station-groups.js';
 import { requireAuth, requirePermissions, type ApiRequest } from '../lib/auth.js';
 import { buildMenuUploadUrl, menuUploadsDir } from '../lib/uploads.js';
 import {
@@ -15,6 +16,7 @@ import {
   createInventoryItemForUser,
   createPurchaseReceiptForUser,
   createUser,
+  suggestUserEmail,
   createWasteRecordForUser,
   createProductForUser,
   createOrderForUser,
@@ -71,7 +73,7 @@ import {
 } from '../services/restaurant-service.js';
 
 const router = Router();
-const roleCodeValues = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAITER', 'KITCHEN', 'BAR', 'PASTRY', 'DELIVERY'] as const;
+const roleCodeValues = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAITER', 'KITCHEN', 'BAR', 'PASTRY', 'DELIVERY', 'KIOSK'] as const;
 const permissionCodeValues = [
   'DASHBOARD_VIEW',
   'POS_USE',
@@ -170,9 +172,16 @@ router.post('/uploads/menu-image', requireAuth, requirePermissions(['INVENTORY_M
 });
 
 router.get('/bootstrap', requireAuth, async (req: ApiRequest, res) => {
+  const snapshot = await getBootstrapSnapshot(req.authUser);
+  if (req.authUser.permissions.includes('KIOSK_ONLY')) {
+    const { brand, menuCategories, menuProducts } = snapshot;
+    const tables = snapshot.tables.filter(t => t.branchId === req.authUser.branchId)
+      .map(({ id, code, area, capacity, status }) => ({ id, code, area, capacity, status }));
+    return res.json({ success: true, data: { brand, menuCategories, menuProducts, tables } });
+  }
   res.json({
     success: true,
-    data: await getBootstrapSnapshot(req.authUser),
+    data: snapshot,
   });
 });
 
@@ -186,9 +195,13 @@ router.put('/settings/brand', requireAuth, requirePermissions(['SETTINGS_MANAGE'
       name: z.string(),
       currencyCode: z.string(),
       currencySymbol: z.string(),
+      address: z.string().trim().max(250).optional(),
+      phone: z.string().trim().max(40).optional(),
+      slogan: z.string().trim().max(160).optional(),
+      stationLayout: z.enum(layouts).optional(),
       logoData: z.string().nullable().optional(),
     });
-    const payload = schema.parse(req.body) as { name: string; currencyCode: string; currencySymbol: string; logoData?: string | null };
+    const payload = schema.parse(req.body) as Parameters<typeof updateBrandForUser>[1];
     const brand = await updateBrandForUser(req.authUser, payload);
     return res.json({ success: true, data: brand });
   } catch (error) {
@@ -377,38 +390,47 @@ router.delete('/tables/:tableId', requireAuth, requirePermissions(['TABLES_MANAG
   }
 });
 
+const reservationChangeSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('FREE') }),
+  z.object({ status: z.literal('RESERVED'), reservation: z.object({
+    name: z.string().trim().min(1, 'Ingresa el nombre.').max(150),
+    address: z.string().trim().max(250).default(''),
+    guests: z.number().int().positive('Indica para cuántas personas es la reserva.'),
+  }) }),
+]).transform((change): import('../../shared/table-reservation.js').ReservationChange => {
+  if (change.status === 'FREE') return { status: 'FREE' };
+  const { name, address, guests } = change.reservation;
+  return { status: 'RESERVED', reservation: { name, address, guests } };
+});
+const kioskKeySchema = z.string().regex(/^[a-f0-9]{32}$/);
+
 router.put('/tables/:tableId/status', requireAuth, requirePermissions(['TABLES_MANAGE']), async (req: ApiRequest, res) => {
   try {
     const tableId = Number(req.params.tableId);
-    const schema = z.object({
-      status: z.enum(['FREE', 'RESERVED']),
-    });
-    const payload = schema.parse(req.body);
+    const payload = reservationChangeSchema.parse(req.body);
 
     if (!tableId) {
       return res.status(400).json({ success: false, message: 'tableId inválido.' });
     }
 
-    await updateTableStatusForUser(req.authUser, { tableId, status: payload.status });
+    await updateTableStatusForUser(req.authUser, { tableId, ...payload, source: 'ADMIN' });
     return res.json({ success: true, data: { success: true } });
   } catch (error) {
     return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible actualizar la mesa.' });
   }
 });
 
-router.put('/tables/:tableId/reservation', requireAuth, requirePermissions(['POS_USE']), async (req: ApiRequest, res) => {
+router.put('/tables/:tableId/reservation', requireAuth, requirePermissions(['POS_USE'], true), async (req: ApiRequest, res) => {
   try {
     const tableId = Number(req.params.tableId);
-    const schema = z.object({
-      status: z.enum(['FREE', 'RESERVED']),
-    });
-    const payload = schema.parse(req.body);
+    const payload = reservationChangeSchema.parse(req.body);
+    const kioskKey = kioskKeySchema.parse(req.body.kioskKey);
 
     if (!tableId) {
       return res.status(400).json({ success: false, message: 'tableId inválido.' });
     }
 
-    await updateTableStatusForUser(req.authUser, { tableId, status: payload.status });
+    await updateTableStatusForUser(req.authUser, { tableId, ...payload, source: 'KIOSK', kioskKey });
     return res.json({ success: true, data: { success: true } });
   } catch (error) {
     return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible actualizar la reserva.' });
@@ -1356,6 +1378,20 @@ router.get('/users', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async
   });
 });
 
+router.post('/users/email-suggestion', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const parsed = z.object({
+    names: z.string().trim().min(1).max(100), firstSurname: z.string().trim().min(1).max(100),
+    secondSurname: z.string().trim().max(100),
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ success: false, message: 'Revisa los nombres y apellidos.' });
+  try {
+    const { names, firstSurname, secondSurname } = parsed.data;
+    return res.json({ success: true, data: await suggestUserEmail(names, firstSurname, secondSurname) });
+  } catch {
+    return res.status(503).json({ success: false, message: 'No se pudo comprobar la disponibilidad del correo.' });
+  }
+});
+
 router.post('/users', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
   const parsed = userCreateSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -1375,6 +1411,9 @@ router.post('/users', requireAuth, requirePermissions(['SETTINGS_MANAGE']), asyn
     });
     return res.status(201).json({ success: true, message: 'Usuario creado.', data: created });
   } catch (error) {
+    if ((error as { code?: string })?.code === 'P2002') {
+      return res.status(409).json({ success: false, message: 'El correo ya está en uso.' });
+    }
     return res.status(400).json({
       success: false,
       message: error instanceof Error ? error.message : 'No fue posible crear el usuario.',
@@ -1426,8 +1465,19 @@ router.patch('/users/:id/password', requireAuth, requirePermissions(['SETTINGS_M
   }
 });
 
-router.post('/orders', requireAuth, requirePermissions(['POS_USE']), async (req: ApiRequest, res) => {
+router.post('/orders', requireAuth, requirePermissions(['POS_USE'], true), async (req: ApiRequest, res) => {
   try {
+    if (req.authUser.permissions.includes('KIOSK_ONLY')) {
+      const payload = z.object({
+        type: z.enum(['DINE_IN', 'TAKE_OUT']),
+        kioskKey: kioskKeySchema.optional(),
+        tableId: z.number().int().positive().optional(),
+        customer: z.object({ name: z.string().trim().min(1).max(150), phone: z.string().max(40).optional() }).optional(),
+        items: z.array(z.object({ productId: z.number().int().positive(), quantity: z.number().int().positive().max(999), notes: z.string().max(2000).optional() })).min(1).max(200),
+      }).parse(req.body);
+      if ((payload.type === 'DINE_IN') !== Boolean(payload.tableId)) throw new Error('Selección de mesa inválida.');
+      req.body = { ...payload, channel: 'Kiosko autoservicio' };
+    }
     const createdOrder = await createOrderForUser(req.authUser, req.body);
 
     res.status(201).json({

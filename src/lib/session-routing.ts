@@ -1,6 +1,7 @@
 import type { AuthUser } from '@/types/restaurant';
 
 export function getPostLoginPath(user: AuthUser) {
+  if (user.permissions.includes('KIOSK_ONLY')) return '/kiosk';
   if (user.role === 'KITCHEN') {
     return '/kds?station=KITCHEN';
   }

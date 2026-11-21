@@ -1,6 +1,6 @@
 import type { PermissionCatalogItem, PermissionCode, RoleCode, RoleProfileSummary } from '../types.js';
 
-export const roleCodeOrder: RoleCode[] = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAITER', 'KITCHEN', 'BAR', 'PASTRY', 'DELIVERY'];
+export const roleCodeOrder: RoleCode[] = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAITER', 'KITCHEN', 'BAR', 'PASTRY', 'DELIVERY', 'KIOSK'];
 
 export const permissionCatalog: PermissionCatalogItem[] = [
   {
@@ -96,6 +96,7 @@ export const permissionCatalog: PermissionCatalogItem[] = [
 ];
 
 export const defaultRoleProfiles: Record<RoleCode, RoleProfileSummary> = {
+  KIOSK: { role: 'KIOSK', name: 'Kiosco', description: 'Solo autoservicio.', sortOrder: 9, permissions: ['KIOSK_ONLY'] },
   ADMIN: {
     role: 'ADMIN',
     name: 'Administrador',
@@ -159,6 +160,8 @@ export const rolePermissions: Record<RoleCode, PermissionCode[]> = Object.fromEn
 ) as Record<RoleCode, PermissionCode[]>;
 
 export function normalizePermissions(permissions: PermissionCode[]): PermissionCode[] {
+  // An exclusive terminal profile, never inherited by administrators.
+  if (permissions.includes('KIOSK_ONLY')) return ['KIOSK_ONLY'];
   const allowed = new Set(permissionCatalog.map((item) => item.code));
   return [...new Set(permissions)].filter((permission): permission is PermissionCode => allowed.has(permission));
 }

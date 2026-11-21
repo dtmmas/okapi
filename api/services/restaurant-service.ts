@@ -21,6 +21,8 @@ import {
 } from '../data/mock-data.js';
 import { defaultRoleProfiles, getDefaultRoleProfile, normalizePermissions, permissionCatalog, roleCodeOrder } from '../lib/permissions.js';
 import { canUseDatabase, prisma } from '../lib/prisma.js';
+import { userEmailCandidates } from '../lib/user-email.js';
+import { isStation, stationGroup } from '../lib/station-groups.js';
 import type {
   AuthUser,
   Branch,
@@ -66,6 +68,7 @@ type CreateOrderPayload = {
   };
   type: 'DINE_IN' | 'TAKE_OUT' | 'DELIVERY';
   channel?: string;
+  kioskKey?: string;
   items: Array<{
     productId: number;
     quantity: number;
@@ -187,6 +190,7 @@ async function getTenantRoleProfilesMap(tenantId: number) {
 }
 
 async function resolvePermissions(tenantId: number, role: AuthUser['role'], mode: unknown, permissionsJson: unknown) {
+  if (role === 'KIOSK') return { permissionMode: 'ROLE' as const, permissions: getDefaultRoleProfile('KIOSK').permissions, customPermissions: [] };
   const permissionMode = mode === 'CUSTOM' ? 'CUSTOM' : 'ROLE';
   const customPermissions = permissionMode === 'CUSTOM' ? parseCustomPermissions(permissionsJson) : [];
   const roleProfiles = await getTenantRoleProfilesMap(tenantId);
@@ -659,6 +663,12 @@ async function syncOrderLifecycleStatus(tx: Prisma.TransactionClient, orderId: n
   }
 }
 
+function staffActivity(tx: Prisma.TransactionClient, user: SanitizedAuthUser, branchId: number, action: string, reference: string) {
+  return tx.staffActivity.create({ data: {
+    tenantId: user.tenantId, branchId, actorId: user.id, actorName: user.name, actorRole: user.role, action, reference,
+  } });
+}
+
 export async function requestOrderBillForUser(
   user: SanitizedAuthUser,
   payload: {
@@ -693,6 +703,7 @@ export async function requestOrderBillForUser(
     }
 
     const billRequestedAt = order.billRequestedAt ?? new Date();
+    if (!order.billRequestedAt) await staffActivity(tx, user, order.branchId, 'Solicitó la cuenta', order.code);
     await tx.order.update({
       where: { id: order.id },
       data: { billRequestedAt },
@@ -784,6 +795,7 @@ function buildStationOrders(orderRows: Array<any>, station: PreparationStation):
         station,
         tableCode: order.table?.code ?? undefined,
         code: `${prefix}-${order.code}`,
+        openedByName: order.openedByName,
         customerName,
         area:
           order.table?.area ??
@@ -800,6 +812,7 @@ function buildStationOrders(orderRows: Array<any>, station: PreparationStation):
             product: item.product.name,
             quantity: Number(item.quantity),
             notes: notes || undefined,
+            sentByName: item.sentByName ?? null,
             status: itemStatus,
           };
         }),
@@ -808,7 +821,7 @@ function buildStationOrders(orderRows: Array<any>, station: PreparationStation):
     .filter(Boolean);
 }
 
-async function buildDatabaseSnapshot(tenantId: number, branchId: number | null): Promise<RestaurantSnapshot | null> {
+async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, showReservations: boolean): Promise<RestaurantSnapshot | null> {
   if (!(await canUseDatabase())) {
     return null;
   }
@@ -836,7 +849,8 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
         payments: true,
       },
     }),
-    prisma.restaurantTable.findMany({ where: { tenantId }, orderBy: { id: 'asc' } }),
+    prisma.restaurantTable.findMany({ where: { tenantId }, orderBy: { id: 'asc' },
+      include: { reservation: showReservations && { select: { name: true, address: true, guests: true, source: true } } } }),
     prisma.customer.findMany({ where: { tenantId }, orderBy: { id: 'asc' } }),
   ]);
 
@@ -858,6 +872,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
     orderBy: { createdAt: 'desc' },
     take: 30,
     include: {
+      createdBy: { select: { name: true } },
       inventoryItem: true,
       branch: true,
       product: true,
@@ -904,6 +919,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
   const manualCashMovementRows = cashShiftRow
     ? await prisma.cashMovementRecord.findMany({
         where: { tenantId, cashShiftId: cashShiftRow.id },
+        include: { createdBy: { select: { name: true } } },
         orderBy: { createdAt: 'desc' },
       })
     : [];
@@ -911,7 +927,10 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
   const currencySymbol = tenantRow?.currencySymbol ?? restaurantSnapshot.brand.currencySymbol ?? 'Q';
   const brand = {
     name: tenantRow?.name ?? restaurantSnapshot.brand.name,
-    slogan: restaurantSnapshot.brand.slogan,
+    stationLayout: tenantRow?.stationLayout ?? 'SEPARATE',
+    slogan: tenantRow?.slogan ?? '',
+    address: tenantRow?.address ?? '',
+    phone: tenantRow?.phone ?? '',
     currencyCode,
     currencySymbol,
     logoData: tenantRow?.logoData ?? restaurantSnapshot.brand.logoData ?? null,
@@ -966,6 +985,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
     channel: order.channel,
     tableCode: order.table?.code,
     assignedTo: order.type === 'DELIVERY' ? 'Asignacion pendiente' : undefined,
+    openedByName: order.openedByName,
     paidAmount: order.payments.reduce((sum, payment) => sum + Number(payment.amount), 0),
     pendingAmount: Math.max(0, Number(order.total) - order.payments.reduce((sum, payment) => sum + Number(payment.amount), 0)),
     paymentCount: order.payments.length,
@@ -974,6 +994,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
       product: item.product.name,
       quantity: Number(item.quantity),
       notes: item.notes ?? undefined,
+      sentByName: item.sentByName,
       paid: paidItemIds.has(item.id),
     })),
     payments: order.payments
@@ -981,6 +1002,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .map((payment) => ({
         id: payment.id,
+        collectedByName: payment.collectedByName,
         method: payment.method,
         amount: Number(payment.amount),
         reference: payment.reference ?? null,
@@ -1003,6 +1025,8 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
       area: table.area,
       status: table.status === PrismaTableStatus.RESERVED ? PrismaTableStatus.RESERVED : activeOrder ? PrismaTableStatus.OCCUPIED : PrismaTableStatus.FREE,
       currentOrder: activeOrder?.code,
+      ...(table.status === 'RESERVED' && table.reservation && (!branchId || table.branchId === branchId)
+        ? { reservation: { ...table.reservation, source: table.reservation.source === 'ADMIN' ? 'ADMIN' as const : 'KIOSK' as const } } : {}),
     };
   });
 
@@ -1022,6 +1046,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
   }));
 
   const inventoryMovements: RestaurantSnapshot['inventoryMovements'] = inventoryMovementRows.map((movement) => ({
+    actorName: movement.createdBy.name,
     id: movement.id,
     inventoryItemId: movement.inventoryItemId,
     itemName: movement.inventoryItem.name,
@@ -1089,9 +1114,10 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
   const salesTrend = buildSalesTrend(orderRows.map((order) => ({ createdAt: order.createdAt, total: Number(order.total) })));
   const topProducts = buildTopProducts(orders);
 
-  const kitchenOrders = buildStationOrders(orderRows, 'KITCHEN');
-  const barOrders = buildStationOrders(orderRows, 'BAR');
-  const pastryOrders = buildStationOrders(orderRows, 'PASTRY');
+  const preparationRows = branchId == null ? orderRows : orderRows.filter(order => order.branchId === branchId);
+  const kitchenOrders = buildStationOrders(preparationRows, 'KITCHEN');
+  const barOrders = buildStationOrders(preparationRows, 'BAR');
+  const pastryOrders = buildStationOrders(preparationRows, 'PASTRY');
 
   const deliveryOrders: DeliveryOrder[] = activeOrders
     .filter((order) => order.type === 'DELIVERY')
@@ -1116,6 +1142,8 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
             .map((payment) => ({
               id: payment.id,
               type: 'SALE' as const,
+              actorName: payment.collectedByName,
+              openedByName: order.openedByName,
               reference: `Pago ${order.code}`,
               amount: Number(payment.amount),
               method: payment.method,
@@ -1128,6 +1156,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
               orderPaidAmount: order.payments.reduce((sum, item) => sum + Number(item.amount), 0),
               orderPendingAmount: Math.max(0, Number(order.total) - order.payments.reduce((sum, item) => sum + Number(item.amount), 0)),
               orderItems: order.items.map((item) => ({
+                sentByName: item.sentByName,
                 quantity: Number(item.quantity),
                 product: item.product.name,
                 notes: item.notes ?? undefined,
@@ -1138,6 +1167,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
                 .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
                 .map((item) => ({
                   method: item.method,
+                  collectedByName: item.collectedByName,
                   amount: Number(item.amount),
                   reference: item.reference ?? null,
                   createdAt: item.createdAt.toISOString(),
@@ -1148,6 +1178,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
 
   const manualCashMovements: CashMovement[] = manualCashMovementRows.map((movement) => ({
     id: movement.id,
+    actorName: movement.createdBy.name,
     type: movement.type as CashMovement['type'],
     reference: movement.reference,
     amount: Number(movement.amount),
@@ -1160,6 +1191,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
         {
           id: cashShiftRow.id,
           type: 'OPENING',
+          actorName: cashShiftRow.openedBy.name,
           reference: 'Apertura de caja',
           amount: Number(cashShiftRow.openingAmount),
           method: 'CASH',
@@ -1207,7 +1239,13 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null):
 }
 
 export async function getBootstrapSnapshot(user: SanitizedAuthUser) {
-  return (await buildDatabaseSnapshot(user.tenantId, user.branchId)) ?? restaurantSnapshot;
+  const showReservations = !user.permissions.includes('KIOSK_ONLY') && user.permissions.some(p => ['TABLES_MANAGE', 'POS_USE', 'CASH_MANAGE'].includes(p));
+  const snapshot = (await buildDatabaseSnapshot(user.tenantId, user.branchId, showReservations)) ?? restaurantSnapshot;
+  if (!isStation(user.role)) return snapshot;
+  const group = stationGroup(snapshot.brand.stationLayout, user.role);
+  return { ...snapshot, kitchenOrders: group.includes('KITCHEN') ? snapshot.kitchenOrders : [],
+    barOrders: group.includes('BAR') ? snapshot.barOrders : [],
+    pastryOrders: group.includes('PASTRY') ? snapshot.pastryOrders : [] };
 }
 
 export async function getPublicBrand(): Promise<RestaurantSnapshot['brand']> {
@@ -1216,7 +1254,7 @@ export async function getPublicBrand(): Promise<RestaurantSnapshot['brand']> {
     if (tenant) {
       return {
         name: tenant.name,
-        slogan: restaurantSnapshot.brand.slogan,
+        slogan: tenant.slogan ?? '',
         currencyCode: tenant.currencyCode ?? restaurantSnapshot.brand.currencyCode,
         currencySymbol: tenant.currencySymbol ?? restaurantSnapshot.brand.currencySymbol,
         logoData: tenant.logoData ?? null,
@@ -1239,7 +1277,10 @@ export async function getBrandForUser(user: SanitizedAuthUser): Promise<Restaura
 
   return {
     name: tenant.name,
-    slogan: restaurantSnapshot.brand.slogan,
+    slogan: tenant.slogan ?? '',
+    address: tenant.address ?? '',
+    stationLayout: tenant.stationLayout,
+    phone: tenant.phone ?? '',
     currencyCode: tenant.currencyCode ?? restaurantSnapshot.brand.currencyCode,
     currencySymbol: tenant.currencySymbol ?? restaurantSnapshot.brand.currencySymbol,
     logoData: tenant.logoData ?? null,
@@ -1248,7 +1289,7 @@ export async function getBrandForUser(user: SanitizedAuthUser): Promise<Restaura
 
 export async function updateBrandForUser(
   user: SanitizedAuthUser,
-  payload: { name: string; currencyCode: string; currencySymbol: string; logoData?: string | null },
+  payload: { name: string; currencyCode: string; currencySymbol: string; logoData?: string | null; address?: string; phone?: string; slogan?: string; stationLayout?: string },
 ): Promise<RestaurantSnapshot['brand']> {
   if (!(await canUseDatabase())) {
     throw new Error('Base de datos no disponible.');
@@ -1282,12 +1323,19 @@ export async function updateBrandForUser(
       currencyCode,
       currencySymbol,
       logoData: logoData ? logoData : null,
+      address: payload.address?.trim(),
+      stationLayout: payload.stationLayout,
+      phone: payload.phone?.trim(),
+      slogan: payload.slogan?.trim(),
     },
   });
 
   return {
     name: tenant.name,
-    slogan: restaurantSnapshot.brand.slogan,
+    stationLayout: tenant.stationLayout,
+    slogan: tenant.slogan ?? '',
+    address: tenant.address ?? '',
+    phone: tenant.phone ?? '',
     currencyCode: tenant.currencyCode ?? restaurantSnapshot.brand.currencyCode,
     currencySymbol: tenant.currencySymbol ?? restaurantSnapshot.brand.currencySymbol,
     logoData: tenant.logoData ?? null,
@@ -1412,6 +1460,15 @@ export async function listUsers(user: SanitizedAuthUser) {
   })) satisfies Promise<UserSummary[]>;
 }
 
+export async function suggestUserEmail(names: string, firstSurname: string, secondSurname: string) {
+  const candidates = userEmailCandidates(names, firstSurname, secondSurname);
+  const rows = await canUseDatabase()
+    ? await prisma.user.findMany({ where: { email: { in: candidates } }, select: { email: true } })
+    : mockUsers;
+  const occupied = new Set(rows.map(row => row.email.toLowerCase()));
+  return { email: candidates.find(candidate => !occupied.has(candidate)) ?? null };
+}
+
 export async function createUser(
   user: SanitizedAuthUser,
   payload: {
@@ -1459,6 +1516,9 @@ export async function createUser(
 
   const id = Math.max(0, ...mockUsers.map((item) => item.id)) + 1;
   const resolved = await resolvePermissions(user.tenantId, payload.role, payload.permissionMode ?? 'ROLE', payload.customPermissions ?? []);
+  if (mockUsers.some(item => item.email.toLowerCase() === payload.email.toLowerCase())) {
+    throw new Error('El correo ya está en uso.');
+  }
   const next = {
     id,
     tenantId: user.tenantId,
@@ -1970,9 +2030,8 @@ export async function deleteTableForUser(user: SanitizedAuthUser, tableId: numbe
 
 export async function updateTableStatusForUser(
   user: SanitizedAuthUser,
-  payload: {
-    tableId: number;
-    status: 'FREE' | 'RESERVED';
+  payload: import('../../shared/table-reservation.js').ReservationChange & {
+    tableId: number; source: 'ADMIN' | 'KIOSK'; kioskKey?: string;
   },
 ) {
   if (!(await canUseDatabase())) {
@@ -1983,8 +2042,8 @@ export async function updateTableStatusForUser(
 
   return prisma.$transaction(async (tx) => {
     const table = await tx.restaurantTable.findFirst({
-      where: { id: payload.tableId, tenantId: user.tenantId },
-      select: { id: true, status: true, branchId: true },
+      where: { id: payload.tableId, tenantId: user.tenantId, ...(user.permissions.includes('KIOSK_ONLY') ? { branchId: user.branchId } : {}) },
+      select: { id: true, status: true, branchId: true, capacity: true, reservation: true },
     });
 
     if (!table) {
@@ -2004,13 +2063,25 @@ export async function updateTableStatusForUser(
       throw new Error('No se puede cambiar el estado de una mesa con cuenta activa.');
     }
 
-    await tx.restaurantTable.update({
-      where: { id: table.id },
-      data: { status },
-    });
+    if (payload.status === 'RESERVED') {
+      const { reservation } = payload;
+      if (reservation.guests > table.capacity) throw new Error(`La mesa admite hasta ${table.capacity} personas.`);
+      const own = payload.source === 'KIOSK' && table.reservation?.kioskKey === payload.kioskKey && !!payload.kioskKey;
+      if (table.status !== 'FREE' && !own) throw new Error('La mesa ya no está disponible.');
+      await tx.restaurantTable.update({ where: { id: table.id }, data: { status } });
+      const data = { ...reservation, source: payload.source, kioskKey: payload.kioskKey ?? null };
+      await tx.tableReservation.upsert({ where: { tableId: table.id }, create: { tableId: table.id, ...data }, update: data });
+    } else {
+      if (payload.source === 'KIOSK' && (!payload.kioskKey || table.reservation?.kioskKey !== payload.kioskKey)) {
+        throw new Error('Esta reserva no pertenece a este kiosco.');
+      }
+      await tx.tableReservation.deleteMany({ where: { tableId: table.id } });
+      await tx.restaurantTable.update({ where: { id: table.id }, data: { status } });
+    }
+    if (table.status !== status) await staffActivity(tx, user, table.branchId, status === 'RESERVED' ? 'Reservó mesa' : 'Liberó mesa', `Mesa #${table.id}`);
 
     return { success: true };
-  });
+  }, { isolationLevel: 'Serializable' });
 }
 
 export async function listKitchenOrders(user: SanitizedAuthUser) {
@@ -2339,13 +2410,17 @@ export async function openCashShift(user: SanitizedAuthUser, payload: { openingA
     throw new Error('Ya existe una caja abierta en esta sucursal.');
   }
 
-  const created = await prisma.cashShift.create({
+  const created = await prisma.$transaction(async tx => {
+    const shift = await tx.cashShift.create({
     data: {
       tenantId: user.tenantId,
       branchId: user.branchId,
       openedById: user.id,
       openingAmount: payload.openingAmount,
     },
+    });
+    await staffActivity(tx, user, shift.branchId, 'Abrió caja', `Caja #${shift.id} · ${shift.openingAmount}`);
+    return shift;
   });
 
   return {
@@ -2356,6 +2431,40 @@ export async function openCashShift(user: SanitizedAuthUser, payload: { openingA
     openedBy: user.name,
     openingAmount: Number(created.openingAmount),
   };
+}
+
+function closeShiftWithoutPendingWork(
+  user: SanitizedAuthUser,
+  shift: { id: number; tenantId: number; branchId: number },
+  closingAmount: number,
+) {
+  return prisma.$transaction(async (tx) => {
+    const orders = await tx.order.findMany({
+      where: {
+        tenantId: shift.tenantId, branchId: shift.branchId,
+        status: { notIn: [PrismaOrderStatus.PAID, PrismaOrderStatus.CANCELLED] },
+      },
+      select: {
+        code: true, total: true, payments: { select: { amount: true } },
+        _count: { select: { items: { where: { status: { in: ['PENDING', 'IN_PREPARATION', 'READY'] } } } } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (orders.length) {
+      const unpaid = orders.filter(order =>
+        order.payments.reduce((balance, payment) => balance.minus(payment.amount), order.total).gt(0)
+      ).length;
+      const pendingItems = orders.reduce((sum, order) => sum + order._count.items, 0);
+      const codes = orders.slice(0, 3).map(order => order.code).join(', ');
+      throw new Error(`No se puede cerrar la caja. Órdenes abiertas: ${orders.length}. Cuentas con saldo pendiente: ${unpaid}. Productos de comanda sin entregar: ${pendingItems}. Revisa: ${codes}${orders.length > 3 ? '…' : ''}.`);
+    }
+    await staffActivity(tx, user, shift.branchId, 'Cerró caja', `Caja #${shift.id} · ${closingAmount}`);
+    return tx.cashShift.update({
+      where: { id: shift.id, closedAt: null },
+      include: { openedBy: { select: { name: true } } },
+      data: { closedAt: new Date(), closingAmount },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function closeCashShift(user: SanitizedAuthUser, payload: { closingAmount: number }) {
@@ -2372,17 +2481,14 @@ export async function closeCashShift(user: SanitizedAuthUser, payload: { closing
     throw new Error('No hay una caja abierta para cerrar.');
   }
 
-  const updated = await prisma.cashShift.update({
-    where: { id: existing.id },
-    data: { closedAt: new Date(), closingAmount: payload.closingAmount },
-  });
+  const updated = await closeShiftWithoutPendingWork(user, existing, payload.closingAmount);
 
   return {
     id: updated.id,
     branchId: updated.branchId,
     isOpen: false,
     openedAt: updated.openedAt.toISOString(),
-    openedBy: user.name,
+    openedBy: updated.openedBy.name,
     openingAmount: Number(updated.openingAmount),
   };
 }
@@ -2479,10 +2585,7 @@ export async function closeCashShiftForControl(
     throw new Error('La caja seleccionada ya está cerrada.');
   }
 
-  const updated = await prisma.cashShift.update({
-    where: { id: existing.id },
-    data: { closedAt: new Date(), closingAmount: payload.closingAmount },
-  });
+  const updated = await closeShiftWithoutPendingWork(user, existing, payload.closingAmount);
 
   return {
     id: updated.id,
@@ -2533,7 +2636,8 @@ export async function createCashMovementForUser(
         ? PrismaCashMovementType.WITHDRAWAL
         : PrismaCashMovementType.ENTRY;
 
-  return prisma.cashMovementRecord.create({
+  return prisma.$transaction(async tx => {
+    const movement = await tx.cashMovementRecord.create({
     data: {
       tenantId: user.tenantId,
       branchId: existing.branchId,
@@ -2545,6 +2649,9 @@ export async function createCashMovementForUser(
       amount: payload.amount,
       notes: payload.notes?.trim() || null,
     },
+    });
+    await staffActivity(tx, user, existing.branchId, { ENTRY: 'Entrada de caja', EXPENSE: 'Gasto de caja', WITHDRAWAL: 'Retiro de caja' }[type], `Caja #${existing.id} · Mov. #${movement.id} · ${movement.amount}`);
+    return movement;
   });
 }
 
@@ -2657,8 +2764,9 @@ export async function payOrderForUser(
       }
     }
 
-    await tx.payment.create({
+    const payment = await tx.payment.create({
       data: {
+        collectedByName: user.name,
         orderId: order.id,
         method: payload.method as any,
         amount: amountToRegister as any,
@@ -2669,6 +2777,7 @@ export async function payOrderForUser(
     });
     const remainingAfterPayment = Math.max(0, Number((remainingBeforePayment - amountToRegister).toFixed(2)));
     const isCompleted = remainingAfterPayment <= 0;
+    await staffActivity(tx, user, order.branchId, isCompleted ? 'Liquidó la cuenta' : 'Registró un abono', `${order.code} · Pago #${payment.id} · ${payment.amount}`);
 
     if (isCompleted) {
       await tx.order.update({
@@ -2690,6 +2799,7 @@ export async function payOrderForUser(
       paidAmount: Number((paidAmount + amountToRegister).toFixed(2)),
       remainingAmount: remainingAfterPayment,
       registeredAmount: amountToRegister,
+      collectedByName: payment.collectedByName,
     };
   });
 }
@@ -3641,6 +3751,7 @@ export async function listInventoryMovementsForUser(
       ...(branchId ? { branchId } : {}),
     },
     include: {
+      createdBy: { select: { name: true } },
       inventoryItem: true,
       branch: true,
       product: true,
@@ -3651,6 +3762,7 @@ export async function listInventoryMovementsForUser(
   });
 
   return rows.map((movement) => ({
+    actorName: movement.createdBy.name,
     id: movement.id,
     inventoryItemId: movement.inventoryItemId,
     itemName: movement.inventoryItem.name,
@@ -3795,48 +3907,6 @@ export async function listDeliveryOrders(user: SanitizedAuthUser) {
   return (await getBootstrapSnapshot(user)).deliveryOrders;
 }
 
-async function ensureOrdersCreatedBy(tenantId: number) {
-  if (!(await canUseDatabase())) {
-    return;
-  }
-
-  const pendingOrders = await prisma.order.findMany({
-    where: { tenantId, createdById: null },
-    select: { id: true, branchId: true },
-  });
-
-  if (!pendingOrders.length) {
-    return;
-  }
-
-  const users = await prisma.user.findMany({
-    where: { tenantId, isActive: true },
-    orderBy: [{ branchId: 'asc' }, { id: 'asc' }],
-    select: { id: true, branchId: true },
-  });
-
-  if (!users.length) {
-    return;
-  }
-
-  const tenantFallbackUserId = users[0].id;
-  const branchUserMap = new Map<number, number>();
-  for (const candidate of users) {
-    if (candidate.branchId && !branchUserMap.has(candidate.branchId)) {
-      branchUserMap.set(candidate.branchId, candidate.id);
-    }
-  }
-
-  await prisma.$transaction(
-    pendingOrders.map((order) =>
-      prisma.order.update({
-        where: { id: order.id },
-        data: { createdById: branchUserMap.get(order.branchId) ?? tenantFallbackUserId },
-      }),
-    ),
-  );
-}
-
 export async function getReportsSummary(
   user: SanitizedAuthUser,
   filters?: {
@@ -3850,6 +3920,7 @@ export async function getReportsSummary(
     const snapshot = await getBootstrapSnapshot(user);
     return {
       summary: snapshot.reportSummary,
+      activity: [],
       salesTrend: snapshot.salesTrend,
       topProducts: snapshot.topProducts,
       paymentMix: buildPaymentMix(snapshot.cashMovements.filter((movement) => movement.type === 'SALE').map((movement) => ({
@@ -3869,8 +3940,6 @@ export async function getReportsSummary(
       },
     };
   }
-
-  await ensureOrdersCreatedBy(user.tenantId);
 
   const where: {
     tenantId: number;
@@ -3901,7 +3970,11 @@ export async function getReportsSummary(
     }
   }
 
-  const [orderRows, users] = await Promise.all([
+  const [activity, orderRows, users] = await Promise.all([
+    prisma.staffActivity.findMany({
+      where: { tenantId: user.tenantId, branchId: where.branchId, actorId: filters?.userId ?? undefined, createdAt: where.createdAt },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200,
+    }),
     prisma.order.findMany({
       where,
       orderBy: { createdAt: 'asc' },
@@ -3998,6 +4071,8 @@ export async function getReportsSummary(
       ),
     ),
     orderCount: orderRows.length,
+    activity: activity.map(({ id, branchId, actorName, actorRole, action, reference, createdAt }) =>
+      ({ id, branchId, actorName, actorRole, action, reference, createdAt: createdAt.toISOString() })),
     customerCount,
     availableUsers: users.map((item) => ({ id: item.id, name: item.name, role: item.role as RoleCode })),
     appliedFilters: {
@@ -4101,9 +4176,18 @@ export async function moveOpenOrderToTable(
       where: { id: destinationTable.id },
       data: { status: PrismaTableStatus.OCCUPIED },
     });
+    await staffActivity(tx, user, order.branchId, 'Trasladó la cuenta', `${order.code} · Mesa #${originTable.id} a #${destinationTable.id}`);
 
     return { success: true };
   });
+}
+
+async function requireStationAccess(tx: Prisma.TransactionClient, user: SanitizedAuthUser, station: PreparationStation) {
+  if (!isStation(user.role)) return;
+  const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: user.tenantId }, select: { stationLayout: true } });
+  if (!stationGroup(tenant.stationLayout, user.role).includes(station)) {
+    throw new Error('Esta área no pertenece a tu pantalla de preparación.');
+  }
 }
 
 export async function updateStationOrderStatus(
@@ -4128,9 +4212,10 @@ export async function updateStationOrderStatus(
         : PrismaPreparationStation.KITCHEN;
 
   return prisma.$transaction(async (tx) => {
+    await requireStationAccess(tx, user, station);
     const order = await tx.order.findFirst({
-      where: { id: payload.orderId, tenantId: user.tenantId },
-      select: { id: true, status: true },
+      where: { id: payload.orderId, tenantId: user.tenantId, branchId: user.branchId ?? undefined },
+      select: { id: true, status: true, code: true, branchId: true },
     });
 
     if (!order) {
@@ -4170,6 +4255,7 @@ export async function updateStationOrderStatus(
     }
 
     await syncOrderLifecycleStatus(tx, payload.orderId, order.status);
+    await staffActivity(tx, user, order.branchId, stationActivity(payload.station, payload.status), `${order.code} · ${updated.count} línea(s)`);
 
     return { success: true };
   });
@@ -4197,12 +4283,14 @@ export async function updateStationOrderItemStatus(
         : PrismaPreparationStation.KITCHEN;
 
   return prisma.$transaction(async (tx) => {
+    await requireStationAccess(tx, user, station);
     const item = await tx.orderItem.findFirst({
       where: {
         id: payload.orderItemId,
         station,
         order: {
           tenantId: user.tenantId,
+          branchId: user.branchId ?? undefined,
         },
       },
       select: {
@@ -4214,6 +4302,8 @@ export async function updateStationOrderItemStatus(
         order: {
           select: {
             status: true,
+            branchId: true,
+            code: true,
           },
         },
       },
@@ -4239,9 +4329,16 @@ export async function updateStationOrderItemStatus(
     });
 
     await syncOrderLifecycleStatus(tx, item.orderId, item.order.status);
+    await staffActivity(tx, user, item.order.branchId, stationActivity(payload.station, payload.status), `${item.order.code} · Línea #${item.id}`);
 
     return { success: true };
   });
+}
+
+function stationActivity(station: PreparationStation, status: KitchenOrder['status']) {
+  return `${{ KITCHEN: 'Cocina', BAR: 'Barra', PASTRY: 'Pastelería' }[station]}: ${{
+    PENDING: 'pendiente', IN_PREPARATION: 'en preparación', READY: 'listo', DELIVERED: 'entregado',
+  }[status]}`;
 }
 
 export async function createOrderForUser(user: SanitizedAuthUser, payload: CreateOrderPayload) {
@@ -4262,6 +4359,7 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
   const productIds = payload.items.map((item) => item.productId);
   const products = await prisma.product.findMany({
     where: {
+      tenantId: user.tenantId,
       id: { in: productIds },
     },
     include: {
@@ -4269,7 +4367,7 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
     },
   });
 
-  if (products.length !== productIds.length) {
+  if (products.length !== new Set(productIds).size) {
     throw new Error('Uno o varios productos no existen.');
   }
 
@@ -4282,8 +4380,35 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
     return sum + Number(item.quantity) * price;
   }, 0);
   const code = `ORD-${String(Date.now()).slice(-8)}`;
+  const sentItems = payload.items.map(item => ({
+    productId: item.productId, quantity: item.quantity, notes: item.notes,
+    unitPrice: priceMap.get(item.productId) ?? 0,
+    station: stationMap.get(item.productId) ?? PrismaPreparationStation.KITCHEN,
+    status: PrismaPreparationStatus.PENDING, sentById: user.id, sentByName: user.name,
+  }));
+  async function recordDispatch(tx: Prisma.TransactionClient, target: { id: number; branchId: number; code: string }) {
+    const labels = { KITCHEN: 'cocina', BAR: 'barra', PASTRY: 'pastelería' };
+    for (const station of new Set(sentItems.map(item => item.station))) {
+      await staffActivity(tx, user, target.branchId, `Envió comanda a ${labels[station]}`, `${target.code} · Cuenta #${target.id}`);
+    }
+  }
 
   const order = await prisma.$transaction(async (tx) => {
+    if (payload.tableId) {
+      const kiosk = user.permissions.includes('KIOSK_ONLY') || payload.channel === 'Kiosko autoservicio';
+      const table = await tx.restaurantTable.findFirst({
+        where: { id: payload.tableId, tenantId: user.tenantId, ...(kiosk && user.branchId ? { branchId: user.branchId } : {}) },
+        select: { status: true },
+      });
+      if (!table) throw new Error('Mesa no disponible.');
+      if (kiosk) {
+        if (table.status !== 'RESERVED' || !payload.kioskKey) throw new Error('Selecciona y reserva una mesa disponible.');
+        const consumed = await tx.tableReservation.deleteMany({
+          where: { tableId: payload.tableId, source: 'KIOSK', kioskKey: payload.kioskKey },
+        });
+        if (!consumed.count) throw new Error('La reserva ya no está disponible para este kiosco.');
+      } else if (table.status === 'RESERVED') throw new Error('Libera primero la reserva desde Administración.');
+    }
     let customerId = payload.customerId ?? null;
 
     if (!customerId && payload.customer?.phone) {
@@ -4331,23 +4456,18 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
       });
 
       if (openOrder) {
+        if (user.permissions.includes('KIOSK_ONLY')) throw new Error('La mesa ya tiene un pedido.');
         const reopenedCode = openOrder.status === PrismaOrderStatus.SERVED ? code : openOrder.code;
+        await staffActivity(tx, user, openOrder.branchId, 'Agregó productos', `${reopenedCode} · Cuenta #${openOrder.id} · ${addedTotal.toFixed(2)}`);
 
         if (!openOrder.customerId && customerId) {
           await tx.order.update({ where: { id: openOrder.id }, data: { customerId } });
         }
 
         await tx.orderItem.createMany({
-          data: payload.items.map((item) => ({
-            orderId: openOrder.id,
-            productId: item.productId,
-            quantity: item.quantity,
-            unitPrice: priceMap.get(item.productId) ?? 0,
-            notes: item.notes,
-            station: stationMap.get(item.productId) ?? PrismaPreparationStation.KITCHEN,
-            status: PrismaPreparationStatus.PENDING,
-          })),
+          data: sentItems.map(item => ({ ...item, orderId: openOrder.id })),
         });
+        await recordDispatch(tx, { ...openOrder, code: reopenedCode });
 
         await tx.order.update({
           where: { id: openOrder.id },
@@ -4393,6 +4513,7 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
         tableId: payload.tableId,
         customerId,
         createdById: user.id,
+        openedByName: user.name,
         code,
         type: payload.type as PrismaOrderType,
         status: PrismaOrderStatus.IN_PREPARATION,
@@ -4401,14 +4522,7 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
           payload.channel ??
           (payload.type === 'DELIVERY' ? 'Delivery web' : payload.type === 'TAKE_OUT' ? 'Recojo' : 'Salon'),
         items: {
-          create: payload.items.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            unitPrice: priceMap.get(item.productId) ?? 0,
-            notes: item.notes,
-            station: stationMap.get(item.productId) ?? PrismaPreparationStation.KITCHEN,
-            status: PrismaPreparationStatus.PENDING,
-          })),
+          create: sentItems,
         },
       },
       include: {
@@ -4418,6 +4532,8 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
       },
     });
 
+    await staffActivity(tx, user, branchId, 'Abrió el pedido', `${created.code} · Cuenta #${created.id}`);
+    await recordDispatch(tx, created);
     await applyRecipeConsumption(tx, {
       tenantId: user.tenantId,
       branchId,
@@ -4459,6 +4575,7 @@ export async function createOrderForUser(user: SanitizedAuthUser, payload: Creat
 }
 
 export function getDemoAccounts() {
+  if (process.env.NODE_ENV === 'production') return [];
   return [
     { role: 'Administrador', email: 'admin@restaurante.gt', password: 'Admin123*' },
     { role: 'Supervisor', email: 'supervisor@restaurante.gt', password: 'Supervisor123*' },

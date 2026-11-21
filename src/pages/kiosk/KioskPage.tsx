@@ -6,7 +6,6 @@ import {
   Lock,
   MonitorSmartphone,
   Pencil,
-  Plus,
   ReceiptText,
   Salad,
   SendHorizontal,
@@ -17,6 +16,9 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
+import { TableCapacity } from '@/components/TableCapacity';
+import { getCategoryIcon } from '@/lib/menu-category-icon';
 import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
 import { createOrUpdateOrder, loginRequest, releaseTableReservationKeepalive, updateTableReservation } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -42,6 +44,16 @@ type ModifierOption = {
 };
 
 const KIOSK_RESERVED_TABLE_KEY = 'restaurant-gt-kiosk-reserved-table-id';
+const KIOSK_RESERVATION_KEY = 'restaurant-gt-kiosk-reservation-key';
+function reservationKey() {
+  let key = sessionStorage.getItem(KIOSK_RESERVATION_KEY);
+  if (!key) {
+    key = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    sessionStorage.setItem(KIOSK_RESERVATION_KEY, key);
+  }
+  return key;
+}
+const categoryButton = 'inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-4 py-2 text-center font-semibold transition portrait:min-h-20 portrait:flex-col portrait:flex-[0_1_10rem] portrait:text-base portrait:[&_svg]:h-7 portrait:[&_svg]:w-7';
 
 function normalizeLabel(value?: string | null) {
   return String(value ?? '')
@@ -104,23 +116,25 @@ function stationLabel(station: 'KITCHEN' | 'BAR' | 'PASTRY') {
 
 export default function KioskPage() {
   const navigate = useNavigate();
-  const token = useSessionStore((state) => state.token);
   const user = useSessionStore((state) => state.user);
+  const kioskOnly = user?.permissions.includes('KIOSK_ONLY');
   const logout = useSessionStore((state) => state.logout);
-  const hydrate = useSessionStore((state) => state.hydrate);
   const snapshot = useSessionStore((state) => state.snapshot);
   const refreshSnapshot = useSessionStore((state) => state.refreshSnapshot);
   const [serviceType, setServiceType] = useState<'DINE_IN' | 'TAKE_OUT'>('TAKE_OUT');
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [selectedLeafCategoryId, setSelectedLeafCategoryId] = useState<number | null>(null);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
   const [reservedTableId, setReservedTableId] = useState<number | null>(() => {
-    const storedValue = Number(localStorage.getItem(KIOSK_RESERVED_TABLE_KEY) ?? '');
+    const storedValue = Number(sessionStorage.getItem(KIOSK_RESERVED_TABLE_KEY) ?? '');
     return Number.isInteger(storedValue) && storedValue > 0 ? storedValue : null;
   });
   const [customerName, setCustomerName] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [guestCount, setGuestCount] = useState('1');
   const [customerPhone, setCustomerPhone] = useState('');
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [welcomeScreen, setWelcomeScreen] = useState(true);
@@ -250,10 +264,7 @@ export default function KioskPage() {
 
   const selectedCategory = useMemo(() => {
     if (!subcategories.length) return null;
-    if (selectedCategoryId) {
-      return subcategories.find((category) => category.id === selectedCategoryId) ?? subcategories[0];
-    }
-    return subcategories[0];
+    return subcategories.find((category) => category.id === selectedCategoryId) ?? null;
   }, [selectedCategoryId, subcategories]);
 
   const leafCategories = useMemo(() => {
@@ -266,10 +277,7 @@ export default function KioskPage() {
 
   const activeLeafCategory = useMemo(() => {
     if (!leafCategories.length) return null;
-    if (selectedLeafCategoryId) {
-      return leafCategories.find((category) => category.id === selectedLeafCategoryId) ?? leafCategories[0];
-    }
-    return leafCategories[0];
+    return leafCategories.find((category) => category.id === selectedLeafCategoryId) ?? null;
   }, [leafCategories, selectedLeafCategoryId]);
 
   const productsForCategory = useMemo(() => {
@@ -277,13 +285,14 @@ export default function KioskPage() {
       return menuProducts.filter((product) => product.categoryId === activeLeafCategory.id);
     }
     if (selectedCategory) {
-      return menuProducts.filter((product) => product.categoryId === selectedCategory.id);
+      const ids = new Set([selectedCategory.id, ...leafCategories.map(category => category.id)]);
+      return menuProducts.filter((product) => product.categoryId != null && ids.has(product.categoryId));
     }
     if (activeGroup) {
       return menuProducts.filter((product) => product.categoryId === activeGroup.id);
     }
     return [];
-  }, [activeGroup, activeLeafCategory, menuProducts, selectedCategory]);
+  }, [activeGroup, activeLeafCategory, leafCategories, menuProducts, selectedCategory]);
 
   const modifierOptions = useMemo(() => {
     const uniqueNames = new Map<string, ModifierOption>();
@@ -345,11 +354,11 @@ export default function KioskPage() {
 
   useEffect(() => {
     if (reservedTableId) {
-      localStorage.setItem(KIOSK_RESERVED_TABLE_KEY, String(reservedTableId));
+      sessionStorage.setItem(KIOSK_RESERVED_TABLE_KEY, String(reservedTableId));
       return;
     }
 
-    localStorage.removeItem(KIOSK_RESERVED_TABLE_KEY);
+    sessionStorage.removeItem(KIOSK_RESERVED_TABLE_KEY);
   }, [reservedTableId]);
 
   useEffect(() => {
@@ -358,7 +367,7 @@ export default function KioskPage() {
     }
 
     const handlePageExit = () => {
-      releaseTableReservationKeepalive(reservedTableId);
+      releaseTableReservationKeepalive(reservedTableId, reservationKey());
     };
 
     window.addEventListener('pagehide', handlePageExit);
@@ -390,7 +399,7 @@ export default function KioskPage() {
     void (async () => {
       let released = false;
       try {
-        await updateTableReservation({ tableId: reservedTableId, status: 'FREE' });
+        await updateTableReservation({ tableId: reservedTableId, status: 'FREE', kioskKey: reservationKey() });
         released = true;
       } catch {
         return;
@@ -419,16 +428,19 @@ export default function KioskPage() {
   }
 
   async function syncTableReservation(nextTableId: number | null) {
-    if (reservedTableId === nextTableId) {
-      return;
-    }
-
+    const kioskKey = reservationKey();
     if (nextTableId) {
-      await updateTableReservation({ tableId: nextTableId, status: 'RESERVED' });
+      await updateTableReservation({ tableId: nextTableId, status: 'RESERVED', kioskKey,
+        reservation: { name: customerName.trim(), address: customerAddress.trim(), guests: Number(guestCount) } });
     }
 
-    if (reservedTableId) {
-      await updateTableReservation({ tableId: reservedTableId, status: 'FREE' });
+    if (reservedTableId && reservedTableId !== nextTableId) {
+      try {
+        await updateTableReservation({ tableId: reservedTableId, status: 'FREE', kioskKey });
+      } catch (error) {
+        if (nextTableId) await updateTableReservation({ tableId: nextTableId, status: 'FREE', kioskKey });
+        throw error;
+      }
     }
 
     setReservedTableId(nextTableId);
@@ -578,8 +590,15 @@ export default function KioskPage() {
       }
     }
 
+    returnToWelcome();
+  }
+
+  function returnToWelcome() {
     setSelectedArea(null);
     setCustomerName('');
+    setCustomerAddress('');
+    setGuestCount('1');
+    sessionStorage.removeItem(KIOSK_RESERVATION_KEY);
     setCustomerPhone('');
     setSelectedTableId(null);
     setReservedTableId(null);
@@ -589,6 +608,7 @@ export default function KioskPage() {
     setSelectedGroupId(null);
     setSelectedCategoryId(null);
     setSelectedLeafCategoryId(null);
+    setCategoryDialogOpen(false);
     setWelcomeScreen(true);
     setOrderModeDialogOpen(false);
     setOrderModeStep('TYPE');
@@ -630,6 +650,10 @@ export default function KioskPage() {
   }
 
   function confirmCustomerContact() {
+    if (!Number.isSafeInteger(Number(guestCount)) || Number(guestCount) < 1) {
+      setError('Indica un número entero de personas mayor que cero.');
+      return;
+    }
     if (!customerName.trim()) {
       setError('Ingresa el nombre para continuar.');
       return;
@@ -699,16 +723,11 @@ export default function KioskPage() {
       throw new Error('Ingresa la contrasena del usuario administrador del kiosko.');
     }
 
-    const currentToken = token;
     await loginRequest(user.email, adminPassword);
-
-    if (currentToken) {
-      localStorage.setItem('restaurant-gt-token', currentToken);
-      await hydrate();
-    }
   }
 
   async function handleAdminAction(action: 'panel' | 'logout') {
+    if (unlocking || (kioskOnly && action !== 'logout')) return;
     setUnlocking(true);
     setUnlockError(null);
     try {
@@ -822,7 +841,7 @@ export default function KioskPage() {
     }
 
     if (!cartLines.length) {
-      setError('Agrega al menos un producto al carrito.');
+      setError('Agrega al menos un producto al pedido.');
       return;
     }
 
@@ -856,7 +875,7 @@ export default function KioskPage() {
       });
 
       const response = await createOrUpdateOrder({
-        ...(serviceType === 'DINE_IN' && selectedTableId ? { tableId: selectedTableId } : {}),
+        ...(serviceType === 'DINE_IN' && selectedTableId ? { tableId: selectedTableId, kioskKey: reservationKey() } : {}),
         ...(customerName.trim()
           ? {
               customer: {
@@ -870,18 +889,12 @@ export default function KioskPage() {
         items: orderItems,
       });
 
+      returnToWelcome();
       setSuccessOrder({
         code: typeof (response as { code?: unknown })?.code === 'string' ? (response as { code: string }).code : 'ORDEN REGISTRADA',
         type: serviceType,
       });
-      setCart({});
-      setCustomerName('');
-      setCustomerPhone('');
-      if (serviceType === 'DINE_IN') {
-        setSelectedTableId(null);
-        setReservedTableId(null);
-      }
-      await refreshSnapshot();
+      void refreshSnapshot().catch(() => { /* La comanda ya fue registrada. */ });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible registrar el pedido del kiosko.');
     } finally {
@@ -890,23 +903,28 @@ export default function KioskPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-[#07070a] dark:text-white">
+    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-[#07070a] dark:text-white portrait:[&_button]:min-h-12 portrait:[&_button]:min-w-12 portrait:[&_button]:touch-manipulation portrait:[&>div.fixed>div]:max-h-full portrait:[&>div.fixed>div]:overflow-y-auto">
       {welcomeScreen ? (
         <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-6">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(251,191,36,0.18),_transparent_28%),radial-gradient(circle_at_bottom,_rgba(249,115,22,0.10),_transparent_24%)]" />
           <div className="relative w-full max-w-5xl rounded-[42px] border border-slate-200 bg-white/95 px-8 py-12 text-center shadow-[0_30px_120px_rgba(15,23,42,0.12)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:px-12 sm:py-16 lg:px-16 lg:py-20">
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+              <ActiveUserLabel />
             <button
               type="button"
               onClick={openAdminDialog}
-              className="absolute right-6 top-6 inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
-              aria-label="Acceso admin"
-              title="Acceso admin"
+              className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl border transition ${kioskOnly ? 'session-exit' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]'}`}
+              aria-label={kioskOnly ? 'Salir del kiosco' : 'Acceso admin'}
+              title={kioskOnly ? 'Salir del kiosco' : 'Acceso admin'}
+              style={kioskOnly ? { width: 'auto', paddingInline: 12, gap: 6 } : undefined}
             >
               <AppIcon icon={Lock} className="h-4 w-4" />
+              {kioskOnly && 'Salir'}
             </button>
+            </div>
             {snapshot?.brand.logoData ? (
-              <div className="mx-auto flex h-24 w-24 items-center justify-center overflow-hidden rounded-[28px] border border-amber-300/30 bg-white p-3 shadow-sm dark:bg-white/[0.03] dark:shadow-none sm:h-28 sm:w-28">
-                <img src={snapshot.brand.logoData} alt={snapshot.brand.name ?? 'Logo'} className="h-full w-full object-cover" />
+              <div className="mx-auto mt-8 flex h-40 w-full max-w-xs items-center justify-center rounded-[28px] border border-amber-300/30 bg-white p-3 shadow-sm dark:bg-white/[0.03] dark:shadow-none sm:mt-0 sm:h-52 sm:max-w-sm portrait:sm:h-64 portrait:sm:max-w-md">
+                <img src={snapshot.brand.logoData} alt={snapshot.brand.name ?? 'Logo'} className="h-full w-full object-contain" />
               </div>
             ) : (
               <div className="mx-auto inline-flex h-20 w-20 items-center justify-center rounded-[28px] border border-amber-300/30 bg-amber-300/10 text-amber-700 dark:text-amber-200">
@@ -914,11 +932,16 @@ export default function KioskPage() {
               </div>
             )}
             <p className="mt-6 text-xs uppercase tracking-[0.45em] text-slate-500 dark:text-zinc-500">Kiosko de autoservicio</p>
+            {successOrder && (
+              <p role="status" className="mt-4 font-semibold text-emerald-700 dark:text-emerald-200">
+                Pedido recibido: {successOrder.code}. {successOrder.type === 'TAKE_OUT' ? 'Pasa a caja para completar el pago.' : 'La cocina preparará tu pedido.'}
+              </p>
+            )}
             <h1 className="mt-4 font-display text-5xl text-slate-950 dark:text-white sm:text-6xl lg:text-7xl">
-              Orden aqui
+              Haz tu pedido
             </h1>
             <p className="mx-auto mt-5 max-w-2xl text-base text-slate-600 dark:text-zinc-400 sm:text-lg lg:text-xl">
-              Toca la pantalla para iniciar tu pedido. Luego elegiras si es para llevar o para comer aqui.
+              Toca «Iniciar pedido» y elige si vas a comer aquí o si lo quieres para llevar.
             </p>
             <button
               type="button"
@@ -931,9 +954,9 @@ export default function KioskPage() {
           </div>
         </div>
       ) : (
-        <div className="mx-auto flex min-h-screen w-full max-w-[1880px] flex-col px-4 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6">
-          <header className="mb-4 flex items-center justify-between gap-3 rounded-[28px] border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:px-5">
-            <div className="flex min-w-0 items-center gap-3">
+        <div className="mx-auto flex min-h-screen w-full max-w-[1880px] flex-col px-4 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6 portrait:!pb-[calc(6rem+env(safe-area-inset-bottom))]">
+          <header className="mb-4 flex items-center justify-between gap-3 rounded-[28px] border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:px-5 portrait:flex-wrap">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
               {snapshot?.brand.logoData ? (
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[18px] border border-slate-200 bg-white p-2 dark:border-white/10 dark:bg-white/[0.03]">
                   <img src={snapshot.brand.logoData} alt={snapshot.brand.name ?? 'Logo'} className="h-full w-full object-cover" />
@@ -978,54 +1001,31 @@ export default function KioskPage() {
               <button
                 type="button"
                 onClick={() => setCartVisible((current) => !current)}
-                className="inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white"
+                className="inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white portrait:hidden"
               >
                 <AppIcon icon={ShoppingCart} className="h-4 w-4" />
-                Carrito ({cartLines.reduce((sum, line) => sum + line.quantity, 0)})
+                Pedido ({cartLines.reduce((sum, line) => sum + line.quantity, 0)})
               </button>
+              <ActiveUserLabel />
               <button
                 type="button"
                 onClick={openAdminDialog}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
-                aria-label="Acceso admin"
-                title="Acceso admin"
+                className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl border transition ${kioskOnly ? 'session-exit' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]'}`}
+                aria-label={kioskOnly ? 'Salir del kiosco' : 'Acceso admin'}
+                title={kioskOnly ? 'Salir del kiosco' : 'Acceso admin'}
+                style={kioskOnly ? { width: 'auto', paddingInline: 12, gap: 6 } : undefined}
               >
                 <AppIcon icon={Lock} className="h-4 w-4" />
+                {kioskOnly && 'Salir'}
               </button>
             </div>
           </header>
 
-          {successOrder ? (
-            <section className="mb-4 rounded-[28px] border border-emerald-300/30 bg-emerald-500/10 p-5 text-emerald-950 shadow-sm dark:text-white">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-emerald-300/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200">
-                    <AppIcon icon={Check} className="h-5 w-5" />
-                  </span>
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.35em] text-emerald-700/80 dark:text-emerald-200">Pedido recibido</p>
-                    <h2 className="mt-1 font-display text-2xl">{successOrder.code}</h2>
-                    <p className="mt-1 text-sm text-emerald-900/80 dark:text-emerald-100/90">
-                      {successOrder.type === 'DINE_IN' ? 'La cocina preparara tu pedido para la mesa seleccionada.' : 'Ahora pasa a caja para completar el pago.'}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void resetKioskOrder()}
-                  className="inline-flex h-11 items-center gap-2 rounded-2xl border border-emerald-300/30 bg-white/70 px-4 text-sm font-semibold text-emerald-950 transition hover:bg-white dark:bg-emerald-500/10 dark:text-white dark:hover:bg-emerald-500/15"
-                >
-                  <AppIcon icon={MonitorSmartphone} className="h-4 w-4" />
-                  Nuevo pedido
-                </button>
-              </div>
-            </section>
-          ) : null}
-
           <div className="relative flex-1 overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
             <div className="flex h-full flex-col">
               <div className="border-b border-slate-200 px-4 py-4 dark:border-white/10 sm:px-5">
-                <div className="flex flex-wrap gap-2">
+                <h2 className="mb-5 hidden text-center font-display text-3xl portrait:block">Elige un menú</h2>
+                <div className="flex flex-wrap justify-center gap-2">
                   {categoryGroups.map((group) => (
                     <button
                       key={group.id}
@@ -1034,19 +1034,28 @@ export default function KioskPage() {
                         setSelectedGroupId(group.id);
                         setSelectedCategoryId(null);
                         setSelectedLeafCategoryId(null);
+                        if (!menuCategories.some(category => category.parentId === group.id)) setCategoryDialogOpen(true);
                       }}
-                      className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition sm:text-base ${
+                      className={`${categoryButton} text-sm sm:text-base ${
                         activeGroup?.id === group.id
                           ? 'border-amber-300/40 bg-amber-300/10 text-amber-950 dark:text-white'
                           : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
                       }`}
                     >
+                      <AppIcon icon={getCategoryIcon(group)} className="h-5 w-5 shrink-0" />
                       {group.name}
                     </button>
                   ))}
                 </div>
                 {subcategories.length ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-3 flex flex-wrap justify-center gap-2">
+                    {activeGroup && menuProducts.some(product => product.categoryId === activeGroup.id) && (
+                      <button type="button" className={categoryButton} onClick={() => {
+                        setSelectedCategoryId(null);
+                        setSelectedLeafCategoryId(null);
+                        setCategoryDialogOpen(true);
+                      }}><AppIcon icon={getCategoryIcon(activeGroup)} className="h-5 w-5 shrink-0" />Platillos de {activeGroup.name}</button>
+                    )}
                     {subcategories.map((category) => (
                       <button
                         key={category.id}
@@ -1054,39 +1063,53 @@ export default function KioskPage() {
                         onClick={() => {
                           setSelectedCategoryId(category.id);
                           setSelectedLeafCategoryId(null);
+                          setCategoryDialogOpen(true);
                         }}
-                        className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
+                        className={`${categoryButton} text-sm ${
                           selectedCategory?.id === category.id
                             ? 'border-sky-300/40 bg-sky-500/10 text-sky-950 dark:text-white'
                             : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
                         }`}
                       >
+                        <AppIcon icon={getCategoryIcon(category)} className="h-5 w-5 shrink-0" />
                         {category.name}
                       </button>
                     ))}
                   </div>
                 ) : null}
+                {categoryDialogOpen && (
+                  <dialog
+                    ref={node => { if (node && !node.open) node.showModal(); }}
+                    onClose={() => setCategoryDialogOpen(false)}
+                    aria-labelledby="kiosk-category-title"
+                    className="m-auto max-h-[88vh] w-[94vw] max-w-5xl overflow-auto rounded-[28px] bg-white p-5 text-slate-900 backdrop:bg-black/60 dark:bg-zinc-950 dark:text-white"
+                  >
+                    <div className="sticky top-0 z-10 flex items-center justify-between gap-3 bg-white py-2 dark:bg-zinc-950">
+                      <h2 id="kiosk-category-title" className="font-display text-2xl">{selectedCategory?.name ?? activeGroup?.name}</h2>
+                      <button type="button" autoFocus onClick={() => setCategoryDialogOpen(false)} className="min-h-11 rounded-2xl border px-4 font-semibold">Volver a categorías</button>
+                    </div>
                 {leafCategories.length ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-3 flex flex-wrap justify-center gap-2">
+                    <button type="button" aria-pressed={!activeLeafCategory} onClick={() => setSelectedLeafCategoryId(null)} className={`${categoryButton} aria-pressed:bg-amber-300/20`}><AppIcon icon={UtensilsCrossed} className="h-5 w-5 shrink-0" />Todos</button>
                     {leafCategories.map((category) => (
                       <button
                         key={category.id}
                         type="button"
                         onClick={() => setSelectedLeafCategoryId(category.id)}
-                        className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
+                        className={`${categoryButton} text-sm ${
                           activeLeafCategory?.id === category.id
                             ? 'border-violet-300/40 bg-violet-500/10 text-violet-950 dark:text-white'
                             : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
                         }`}
                       >
+                        <AppIcon icon={getCategoryIcon(category)} className="h-5 w-5 shrink-0" />
                         {category.name}
                       </button>
                     ))}
                   </div>
                 ) : null}
-              </div>
-
               <div className="flex-1 overflow-auto px-4 py-4 sm:px-5">
+                {!productsForCategory.length && <p>No hay platillos en esta categoría.</p>}
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                   {productsForCategory.map((product) => (
                     <button
@@ -1109,29 +1132,29 @@ export default function KioskPage() {
                       )}
                       <p className="font-semibold text-slate-950 dark:text-white sm:text-lg">{product.name}</p>
                       <p className="mt-2 text-lg font-semibold text-slate-700 dark:text-zinc-200">{formatMoney(product.price)}</p>
-                      <div className="mt-4 inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 dark:text-white">
-                        <AppIcon icon={Plus} className="h-4 w-4" />
-                        Agregar
-                      </div>
                     </button>
                   ))}
                 </div>
               </div>
+                  </dialog>
+                )}
+              </div>
             </div>
 
-            <aside
-              className={`absolute inset-y-0 right-0 z-20 flex w-full max-w-[430px] flex-col border-l border-slate-200 bg-white p-4 shadow-[-16px_0_48px_rgba(15,23,42,0.12)] transition-transform dark:border-white/10 dark:bg-[#0b0b10] dark:shadow-none sm:p-5 ${
-                cartVisible ? 'translate-x-0' : 'translate-x-full'
+            <aside aria-label="Tu pedido"
+              className={`absolute inset-y-0 right-0 z-20 w-full max-w-[430px] flex-col border-l border-slate-200 bg-white p-4 shadow-[-16px_0_48px_rgba(15,23,42,0.12)] dark:border-white/10 dark:bg-[#0b0b10] dark:shadow-none sm:p-5 portrait:fixed portrait:inset-0 portrait:max-w-none portrait:overflow-y-auto portrait:overscroll-contain portrait:pb-[max(1rem,env(safe-area-inset-bottom))] ${
+                cartVisible ? 'flex' : 'hidden'
               }`}
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Carrito</p>
+                  <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Pedido</p>
                   <h2 className="mt-2 font-display text-2xl text-slate-950 dark:text-white">Tu pedido</h2>
                 </div>
                 <button
                   type="button"
                   onClick={() => setCartVisible(false)}
+                  aria-label="Volver al menú"
                   className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
                 >
                   <AppIcon icon={X} className="h-4 w-4" />
@@ -1150,7 +1173,7 @@ export default function KioskPage() {
                   ) : null}
                   {serviceType === 'DINE_IN' && selectedTable ? (
                     <span className="inline-flex h-8 items-center rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold uppercase tracking-[0.22em] text-slate-700 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200">
-                      Mesa {selectedTable.code}
+                      Mesa <span className="table-code ms-1">{selectedTable.code}</span>
                     </span>
                   ) : null}
                 </div>
@@ -1176,13 +1199,17 @@ export default function KioskPage() {
                     <span className="text-slate-500 dark:text-zinc-400">Telefono</span>
                     <span className="font-semibold text-slate-950 dark:text-white">{customerPhone.trim() || 'No registrado'}</span>
                   </div>
+                  {serviceType === 'DINE_IN' && reservedTableId && <>
+                    <p><strong>Personas en la reserva:</strong> {guestCount}</p>
+                    {customerAddress.trim() && <p className="break-words"><strong>Dirección:</strong> {customerAddress.trim()}</p>}
+                  </>}
                 </div>
                 <p className="mt-3 text-xs text-slate-500 dark:text-zinc-500">
                   Los datos del cliente se capturan en el flujo guiado y aquí solo se muestran como referencia.
                 </p>
               </div>
 
-              <div className="mt-4 flex-1 overflow-auto space-y-2 pr-1">
+              <div className="mt-4 flex-1 overflow-auto space-y-2 pr-1 portrait:flex-none portrait:overflow-visible">
                 {cartLines.length ? (
                   cartLines.map((line) => {
                     const product = menuProductById.get(line.productId);
@@ -1264,7 +1291,7 @@ export default function KioskPage() {
                   })
                 ) : (
                   <div className="rounded-[22px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500">
-                    Tu carrito esta vacio.
+                    Tu pedido está vacío.
                   </div>
                 )}
               </div>
@@ -1293,6 +1320,15 @@ export default function KioskPage() {
               </button>
             </aside>
           </div>
+          {!cartVisible && (
+            <footer className="fixed inset-x-0 bottom-0 z-10 hidden border-t border-slate-200 bg-white px-4 pt-3 pb-[max(.75rem,env(safe-area-inset-bottom))] dark:border-white/10 dark:bg-zinc-950 portrait:block">
+              <button type="button" onClick={() => setCartVisible(true)}
+                className="mx-auto flex min-h-14 w-full max-w-3xl items-center justify-between gap-3 rounded-2xl bg-amber-400 px-5 text-lg font-bold text-zinc-950">
+                <span className="inline-flex items-center gap-2"><AppIcon icon={ShoppingCart} className="h-6 w-6" />Ver pedido ({cartLines.reduce((sum, line) => sum + line.quantity, 0)})</span>
+                <span>{formatMoney(cartTotal)}</span>
+              </button>
+            </footer>
+          )}
         </div>
       )}
 
@@ -1321,7 +1357,7 @@ export default function KioskPage() {
                 </h2>
                 <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
                   {orderModeStep === 'TYPE'
-                    ? 'Al confirmar, el menú aparecerá a pantalla completa y el carrito quedará al costado.'
+                    ? 'Al confirmar, el menú aparecerá a pantalla completa y podrás ver tu pedido al costado.'
                     : orderModeStep === 'CONTACT'
                       ? 'Antes de elegir la mesa, registra el nombre y el telefono del cliente.'
                     : orderModeStep === 'AREA'
@@ -1364,6 +1400,14 @@ export default function KioskPage() {
                   <h3 className="mt-4 font-display text-2xl text-slate-950 dark:text-white">Comer aqui</h3>
                   <p className="mt-2 text-sm text-slate-600 dark:text-zinc-300">Primero seleccionas tu mesa y luego continúas al menú.</p>
                 </button>
+                <button
+                  type="button"
+                  disabled={reservingTable}
+                  onClick={() => void resetKioskOrder()}
+                  className="min-h-12 rounded-2xl border border-rose-300/50 px-5 font-semibold text-rose-700 hover:bg-rose-500/10 disabled:opacity-50 dark:text-rose-200 sm:col-span-2"
+                >
+                  Cancelar pedido
+                </button>
               </div>
             ) : orderModeStep === 'CONTACT' ? (
               <div className="mt-6">
@@ -1372,6 +1416,7 @@ export default function KioskPage() {
                     <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nombre</label>
                     <input
                       value={customerName}
+                      maxLength={150}
                       onChange={(event) => setCustomerName(event.target.value)}
                       placeholder="Nombre del cliente"
                       className="mt-3 h-14 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white dark:placeholder:text-zinc-500 sm:text-base"
@@ -1386,6 +1431,14 @@ export default function KioskPage() {
                       className="mt-3 h-14 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white dark:placeholder:text-zinc-500 sm:text-base"
                     />
                   </div>
+                  <label className="text-sm">Dirección (opcional)
+                    <input value={customerAddress} onChange={event => setCustomerAddress(event.target.value)} maxLength={250}
+                      className="mt-2 h-14 w-full rounded-2xl border bg-transparent px-4" />
+                  </label>
+                  <label className="text-sm">¿Para cuántas personas?
+                    <input value={guestCount} onChange={event => setGuestCount(event.target.value)} type="number" min={1} step={1}
+                      className="mt-2 h-14 w-full rounded-2xl border bg-transparent px-4" />
+                  </label>
                 </div>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -1458,19 +1511,20 @@ export default function KioskPage() {
                 {selectedArea ? (
                   <p className="mt-2 text-sm font-semibold text-slate-600 dark:text-zinc-300">Area seleccionada: {selectedArea}</p>
                 ) : null}
-                <div className="mt-3 grid max-h-[42vh] grid-cols-2 gap-3 overflow-auto pr-1 sm:grid-cols-3">
+                <div className="mt-3 grid max-h-[42vh] grid-cols-2 gap-x-2 gap-y-3 overflow-auto pr-1 sm:grid-cols-3">
                   {tablesForSelectedArea.map((table) => (
                     <button
                       key={table.id}
                       type="button"
                       onClick={() => setSelectedTableId(table.id)}
-                      className={`rounded-[24px] border px-4 py-4 text-left transition ${
-                        selectedTableId === table.id
-                          ? 'border-amber-300/40 bg-amber-300/10 text-amber-950 dark:text-white'
-                          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
-                      }`}
+                      disabled={Number(guestCount) > table.capacity}
+                      data-table-status={table.status}
+                      aria-pressed={selectedTableId === table.id}
+                      className={`rounded-[24px] border px-4 py-4 text-left transition ${selectedTableId === table.id ? 'ring-2 ring-inset ring-slate-700 dark:ring-white' : ''}`}
                     >
-                      <p className="font-display text-2xl text-slate-950 dark:text-white">{table.code}</p>
+                      <p className="table-code text-2xl text-slate-950 dark:text-white">{table.code}</p>
+                      <div className="mt-2"><TableCapacity capacity={table.capacity} /></div>
+                      {Number(guestCount) > table.capacity && <p className="mt-1 text-xs">Cupo insuficiente</p>}
                     </button>
                   ))}
                 </div>
@@ -1506,7 +1560,7 @@ export default function KioskPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Acceso administrativo</p>
-                <h2 className="mt-2 font-display text-2xl text-slate-950 dark:text-white">Desbloquear kiosko</h2>
+                <h2 className="mt-2 font-display text-2xl text-slate-950 dark:text-white">{kioskOnly ? 'Salir del kiosco' : 'Desbloquear kiosko'}</h2>
                 <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
                   Ingresa la contrasena del usuario actual para salir del modo kiosko bloqueado.
                 </p>
@@ -1531,6 +1585,7 @@ export default function KioskPage() {
               <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Contrasena</label>
               <input
                 type="password"
+                autoComplete="off"
                 value={adminPassword}
                 onChange={(event) => setAdminPassword(event.target.value)}
                 placeholder="Ingresa la contrasena"
@@ -1545,7 +1600,7 @@ export default function KioskPage() {
             ) : null}
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
-              <button
+              {!kioskOnly && <button
                 type="button"
                 onClick={() => void handleAdminAction('panel')}
                 disabled={unlocking}
@@ -1553,12 +1608,12 @@ export default function KioskPage() {
               >
                 <AppIcon icon={ArrowLeft} className="h-4 w-4" />
                 {unlocking ? 'Validando...' : 'Ir al panel'}
-              </button>
+              </button>}
               <button
                 type="button"
                 onClick={() => void handleAdminAction('logout')}
                 disabled={unlocking}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-rose-300/30 bg-rose-500/10 text-sm font-semibold text-rose-900 transition hover:bg-rose-500/15 disabled:opacity-50 dark:text-white sm:h-14 sm:text-base"
+                className="session-exit inline-flex h-12 items-center justify-center gap-2 rounded-2xl border text-sm font-semibold transition disabled:opacity-50 sm:h-14 sm:text-base"
               >
                 <AppIcon icon={Lock} className="h-4 w-4" />
                 {unlocking ? 'Validando...' : 'Cerrar sesion'}
@@ -1569,7 +1624,9 @@ export default function KioskPage() {
       ) : null}
 
       {productModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 dark:bg-black/60">
+        <dialog ref={node => { if (node && !node.open) node.showModal(); }} onClose={closeProductModal}
+          aria-label={modalProduct?.name ?? 'Detalle del producto'}
+          className="m-auto max-h-[90vh] w-[94vw] max-w-2xl overflow-y-auto rounded-[28px] bg-transparent backdrop:bg-black/60">
           <div className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-5 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:p-6 lg:p-8">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -1656,15 +1713,17 @@ export default function KioskPage() {
                 onClick={confirmAddProduct}
                 className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base"
               >
-                {editingLineId ? 'Guardar cambios' : 'Agregar al carrito'}
+                {editingLineId ? 'Guardar cambios' : 'Agregar al pedido'}
               </button>
             </div>
           </div>
-        </div>
+        </dialog>
       ) : null}
 
       {productModalOpen && modifierDialogSection ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm dark:bg-black/70">
+        <dialog ref={node => { if (node && !node.open) node.showModal(); }} onClose={closeModifierDialog}
+          aria-label={modifierDialogSection === 'SAUCES' ? 'Seleccionar salsas' : 'Seleccionar aderezos'}
+          className="m-auto max-h-[90vh] w-[94vw] max-w-4xl overflow-y-auto rounded-[28px] bg-transparent backdrop:bg-black/60">
           <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white p-5 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:p-6 lg:p-8">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -1748,7 +1807,7 @@ export default function KioskPage() {
               </button>
             </div>
           </div>
-        </div>
+        </dialog>
       ) : null}
     </div>
   );

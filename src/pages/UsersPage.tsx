@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Panel } from '@/components/Panel';
 import { StatusBadge } from '@/components/StatusBadge';
-import { createUser, listUsers, updateUser, updateUserPassword } from '@/services/api';
+import { createUser, getRolesConfiguration, listUsers, suggestUserEmail, updateUser, updateUserPassword } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
-import type { UserSummary } from '@/types/restaurant';
+import type { RoleProfileSummary, UserSummary } from '@/types/restaurant';
 
-const roleOptions = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAITER', 'KITCHEN', 'BAR', 'PASTRY', 'DELIVERY'] as const;
 const permissionOptions = [
   { code: 'DASHBOARD_VIEW', label: 'Panel' },
   { code: 'POS_USE', label: 'Punto de venta' },
@@ -19,21 +18,10 @@ const permissionOptions = [
   { code: 'SETTINGS_MANAGE', label: 'Configuración' },
 ] as const;
 
-function roleLabel(role: string) {
-  if (role === 'CASHIER') return 'Cajero';
-  if (role === 'WAITER') return 'Mesero';
-  if (role === 'KITCHEN') return 'Cocina';
-  if (role === 'BAR') return 'Bar';
-  if (role === 'PASTRY') return 'Pastelería';
-  if (role === 'SUPERVISOR') return 'Supervisor';
-  if (role === 'ADMIN') return 'Administrador';
-  if (role === 'DELIVERY') return 'Reparto';
-  return role;
-}
-
 export default function UsersPage() {
   const snapshot = useSessionStore((state) => state.snapshot);
   const [users, setUsers] = useState<UserSummary[]>([]);
+  const [profiles, setProfiles] = useState<RoleProfileSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,8 +32,31 @@ export default function UsersPage() {
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [firstSurname, setFirstSurname] = useState('');
+  const [secondSurname, setSecondSurname] = useState('');
+  const [manualEmail, setManualEmail] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [suggestion, setSuggestion] = useState({ key: '', value: '', message: '' });
+  const suggestionKey = JSON.stringify([name, firstSurname, secondSurname, attempt]);
+  const proposedEmail = suggestion.key === suggestionKey ? suggestion.value : '';
+  const loginEmail = manualEmail ? email.trim().toLowerCase() : proposedEmail;
+
+  useEffect(() => {
+    if (!createOpen || manualEmail || !name.trim() || !firstSurname.trim()) return;
+    let current = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await suggestUserEmail(name, firstSurname, secondSurname);
+        if (current) setSuggestion({ key: suggestionKey, value: result.email ?? '',
+          message: result.email ? '' : 'No hay una combinación disponible. Puedes escribir otro correo.' });
+      } catch {
+        if (current) setSuggestion({ key: suggestionKey, value: '', message: 'No se pudo verificar el correo.' });
+      }
+    }, 200);
+    return () => { current = false; window.clearTimeout(timer); };
+  }, [createOpen, manualEmail, name, firstSurname, secondSurname, suggestionKey]);
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<(typeof roleOptions)[number]>('WAITER');
+  const [role, setRole] = useState<UserSummary['role']>('WAITER');
   const [branchId, setBranchId] = useState<number | null>(null);
   const [isActive, setIsActive] = useState(true);
   const [permissionMode, setPermissionMode] = useState<'ROLE' | 'CUSTOM'>('ROLE');
@@ -64,8 +75,9 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await listUsers();
+      const [data, config] = await Promise.all([listUsers(), getRolesConfiguration()]);
       setUsers(data);
+      setProfiles(config.roles);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible cargar usuarios.');
     } finally {
@@ -82,7 +94,7 @@ export default function UsersPage() {
     setEmail('');
     setPassword('');
     setRole('WAITER');
-    setBranchId(null);
+    setBranchId(useSessionStore.getState().user?.branchId ?? null);
     setIsActive(true);
     setPermissionMode('ROLE');
     setCustomPermissions([]);
@@ -90,6 +102,10 @@ export default function UsersPage() {
 
   function openCreate() {
     resetForm();
+    setFirstSurname('');
+    setSecondSurname('');
+    setManualEmail(false);
+    setSuggestion({ key: '', value: '', message: '' });
     setCreateOpen(true);
   }
 
@@ -98,7 +114,7 @@ export default function UsersPage() {
     setName(user.name);
     setEmail(user.email);
     setPassword('');
-    setRole((roleOptions.includes(user.role as any) ? (user.role as any) : 'WAITER') as (typeof roleOptions)[number]);
+    setRole(user.role);
     setBranchId(user.branchId ?? null);
     setIsActive(user.isActive);
     setPermissionMode(user.permissionMode);
@@ -117,8 +133,8 @@ export default function UsersPage() {
     setError(null);
     try {
       await createUser({
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
+        name: [name, firstSurname, secondSurname].map(part => part.trim()).filter(Boolean).join(' '),
+        email: loginEmail,
         password,
         role,
         branchId,
@@ -130,6 +146,7 @@ export default function UsersPage() {
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No fue posible crear el usuario.');
+      setAttempt(value => value + 1);
     } finally {
       setLoading(false);
     }
@@ -188,6 +205,7 @@ export default function UsersPage() {
           <button
             type="button"
             onClick={openCreate}
+            disabled={loading || !profiles.length}
             className="h-11 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white"
           >
             Nuevo usuario
@@ -210,7 +228,7 @@ export default function UsersPage() {
                   <p className="truncate font-semibold text-slate-950 dark:text-white">{user.name}</p>
                   <p className="truncate text-sm text-slate-500 dark:text-zinc-500">{user.email}</p>
                   <p className="mt-2 text-sm text-slate-700 dark:text-zinc-300">
-                    {roleLabel(user.role)} · {user.branchId ? branchLookup.get(user.branchId) ?? `Sucursal ${user.branchId}` : 'Sin sucursal'}
+                    {profiles.find(profile => profile.role === user.role)?.name ?? user.role} · {user.branchId ? branchLookup.get(user.branchId) ?? `Sucursal ${user.branchId}` : 'Sin sucursal'}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2">
@@ -242,7 +260,7 @@ export default function UsersPage() {
 
       {createOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 dark:bg-black/60">
-          <div className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white p-5 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:p-6 lg:p-8">
+          <div className="max-h-full w-full max-w-2xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-5 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:p-6 lg:p-8">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Administración</p>
@@ -259,22 +277,36 @@ export default function UsersPage() {
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
               <label className="block">
-                <span className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nombre</span>
+                <span className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nombres</span>
                 <input
+                  maxLength={100}
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   className="mt-3 h-12 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:h-14 sm:text-base"
                 />
               </label>
 
-              <label className="block">
+              {(['Primer apellido', 'Segundo apellido (opcional)'] as const).map((label, index) => (
+                <label className="block" key={label}>
+                  <span className="text-xs uppercase tracking-widest text-slate-500">{label}</span>
+                  <input maxLength={100} value={index ? secondSurname : firstSurname}
+                    onChange={event => (index ? setSecondSurname : setFirstSurname)(event.target.value)}
+                    className="mt-3 h-12 w-full rounded-[22px] border border-slate-200 px-4 dark:border-white/10 dark:bg-black/30 sm:h-14" />
+                </label>
+              ))}
+              <div><label className="block">
                 <span className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Correo</span>
                 <input
-                  value={email}
+                  type="email" readOnly={!manualEmail} value={loginEmail}
                   onChange={(event) => setEmail(event.target.value)}
                   className="mt-3 h-12 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:h-14 sm:text-base"
                 />
               </label>
+              <span role="status" className="block text-xs">{!manualEmail && (suggestion.key === suggestionKey ? suggestion.message :
+                name.trim() && firstSurname.trim() ? 'Comprobando disponibilidad…' : 'Escribe nombres y primer apellido.')}</span>
+              <button type="button" className="mt-1 text-xs underline" onClick={() => {
+                setEmail(proposedEmail); setManualEmail(!manualEmail);
+              }}>{manualEmail ? 'Usar sugerencia automática' : 'Escribir otro correo'}</button></div>
 
               <label className="block">
                 <span className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Contraseña</span>
@@ -293,9 +325,9 @@ export default function UsersPage() {
                   onChange={(event) => setRole(event.target.value as any)}
                   className="mt-3 h-12 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:h-14 sm:text-base"
                 >
-                  {roleOptions.map((item) => (
-                    <option key={item} value={item}>
-                      {roleLabel(item)}
+                  {profiles.map((profile) => (
+                    <option key={profile.role} value={profile.role}>
+                      {profile.name}
                     </option>
                   ))}
                 </select>
@@ -370,7 +402,7 @@ export default function UsersPage() {
               </button>
               <button
                 type="button"
-                disabled={loading}
+                disabled={loading || !name.trim() || !firstSurname.trim() || !loginEmail}
                 onClick={() => void handleCreate()}
                 className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 disabled:opacity-50 dark:text-white sm:h-14 sm:text-base"
               >
@@ -416,9 +448,9 @@ export default function UsersPage() {
                   onChange={(event) => setRole(event.target.value as any)}
                   className="mt-3 h-12 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none focus:border-emerald-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:h-14 sm:text-base"
                 >
-                  {roleOptions.map((item) => (
-                    <option key={item} value={item}>
-                      {roleLabel(item)}
+                  {profiles.map((profile) => (
+                    <option key={profile.role} value={profile.role}>
+                      {profile.name}
                     </option>
                   ))}
                 </select>

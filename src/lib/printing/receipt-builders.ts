@@ -1,4 +1,9 @@
 import type { ReceiptDocument, ReceiptSectionEntry } from '@/types/printing';
+import { paperWidth } from './paper';
+
+export function receiptItemNote(item: { notes?: string; sentByName?: string | null }) {
+  return [`Envió: ${item.sentByName?.trim() || 'Sin registrar'}`, item.notes].filter(Boolean).join('\n');
+}
 
 export function escapeReceiptHtml(value: string) {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -10,7 +15,8 @@ function renderReceiptEntry(entry: ReceiptSectionEntry) {
   return `<div class="meta">${titleHtml}${linesHtml}</div>`;
 }
 
-export function buildReceiptHtml(document: ReceiptDocument) {
+export function buildReceiptHtml(document: ReceiptDocument, mode: 'print' | 'preview' = 'print') {
+  const width = paperWidth(document.paperWidthMm);
   const metadataHtml = document.metadata
     .map((item) => `<strong>${escapeReceiptHtml(item.label)}:</strong> ${escapeReceiptHtml(item.value)}`)
     .join('<br/>');
@@ -47,12 +53,12 @@ export function buildReceiptHtml(document: ReceiptDocument) {
     <title>${escapeReceiptHtml(document.title)}</title>
     <style>
       * { box-sizing: border-box; }
-      @page { size: 80mm auto; margin: 0; }
+      @page { size: auto; margin: 0; }
       body { margin: 0; background: #fff; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: #111; }
-      .ticket { width: 80mm; padding: 3mm 3mm 2mm; margin: 0; }
+      .ticket { width: ${width}mm; max-width: 100%; padding: 3mm 3mm 2mm; margin: 0; overflow-wrap: anywhere; }
       .center { text-align: center; }
-      .title { font-weight: 900; font-size: 20px; letter-spacing: 0.1em; }
-      .subtitle { font-weight: 900; font-size: 14px; margin-top: 4px; }
+      .brand-name { font-weight: 900; font-size: 26px; line-height: 1.1; overflow-wrap: anywhere; }
+      .title { margin-top: 4px; font-weight: 700; font-size: 16px; letter-spacing: 0.04em; }
       .meta { font-size: 12px; margin-top: 8px; font-weight: 800; }
       .divider { border-top: 2px dashed #222; margin: 8px 0; }
       .row { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; font-size: 13px; padding: 6px 0; }
@@ -61,14 +67,16 @@ export function buildReceiptHtml(document: ReceiptDocument) {
       .note { font-weight: 700; font-size: 12px; opacity: 0.88; margin-top: 2px; white-space: pre-wrap; }
       .entry-title { margin-bottom: 2px; font-weight: 900; }
       .summary-note { margin-top: 6px; text-align: center; font-size: 11px; font-weight: 800; opacity: 0.82; }
-      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; }
+      .footer { margin-top: 8px; font-size: 12px; font-weight: 900; text-align: center; letter-spacing: 0.06em; white-space: pre-line; }
       @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
     </style>
   </head>
   <body>
     <div class="ticket">
       <div class="center">
-        <div class="subtitle">${escapeReceiptHtml(document.brandName)}</div>
+        ${document.logoPng?.startsWith('data:image/png;base64,') ? `<img alt="" style="display:block;max-width:${Math.min(56,width-10)}mm;max-height:32mm;margin:0 auto 2mm" src="${escapeReceiptHtml(document.logoPng)}" />` : ''}
+        <div class="brand-name">${escapeReceiptHtml(document.brandName)}</div>
+        ${(document.brandLines ?? []).map(line => `<div style="font-size:12px;line-height:1.35">${escapeReceiptHtml(line)}</div>`).join('')}
         <div class="title">${escapeReceiptHtml(document.title)}</div>
         <div class="meta">${escapeReceiptHtml(document.printedAt)}</div>
       </div>
@@ -80,10 +88,10 @@ export function buildReceiptHtml(document: ReceiptDocument) {
       ${sectionsHtml}
       ${footerHtml}
     </div>
-    <script>
+    ${mode === 'print' ? `<script>
       window.onload = () => { window.print(); };
       window.onafterprint = () => { window.close(); };
-    </script>
+    </script>` : ''}
   </body>
 </html>`;
 }

@@ -1,8 +1,11 @@
-import { ArrowLeftRight, Beef, CakeSlice, Check, ChefHat, Coffee, CreditCard, Fish, GlassWater, IceCreamCone, LayoutDashboard, LogOut, Martini, Pencil, Pizza, ReceiptText, Salad, Sandwich, SendHorizontal, UserRound, UtensilsCrossed, WalletCards, X } from 'lucide-react';
+import { ArrowLeftRight, Check, ChefHat, CreditCard, LogOut, Pencil, ReceiptText, Salad, SendHorizontal, UserRound, UtensilsCrossed, WalletCards, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AppIcon, type IconComponent } from '@/components/AppIcon';
+import { AppIcon } from '@/components/AppIcon';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
+import { getCategoryIcon } from '@/lib/menu-category-icon';
 import { printReceipt } from '@/lib/printing/print-service';
+import { receiptItemNote } from '@/lib/printing/receipt-builders';
 import { StatusBadge } from '@/components/StatusBadge';
 import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
 import { createOrUpdateOrder, moveTableAccount, requestOrderBill } from '@/services/api';
@@ -299,11 +302,12 @@ export default function PosMenuPage() {
         { label: 'Mesa', value: tableLabel },
         { label: 'Cliente', value: customerLabel },
         { label: 'Cuenta', value: activeOrder.code },
+        { label: 'Abrió el pedido', value: activeOrder.openedByName ?? 'Sin registrar' },
       ],
       items: preBillItems.map((item) => ({
         left: `${Number(item.quantity)} x ${item.product}`,
         right: hasPrices && item.lineTotal !== null ? formatMoney(item.lineTotal) : '',
-        note: item.notes,
+        note: receiptItemNote(item),
       })),
       summary: [{ label: 'TOTAL', value: formatMoney(total) }],
       sections: hasPrices
@@ -495,51 +499,6 @@ export default function PosMenuPage() {
     return 'Cocina';
   }
 
-  function getCategoryIcon(category: MenuCategory): IconComponent {
-    const name = category.name.trim().toLowerCase();
-
-    if (name.includes('pizza')) {
-      return Pizza;
-    }
-    if (name.includes('hamburg') || name.includes('burger') || name.includes('sandwich') || name.includes('panini')) {
-      return Sandwich;
-    }
-    if (name.includes('ensalada') || name.includes('veg')) {
-      return Salad;
-    }
-    if (name.includes('carne') || name.includes('pollo') || name.includes('parrilla') || name.includes('res')) {
-      return Beef;
-    }
-    if (name.includes('marisco') || name.includes('pescado') || name.includes('ceviche')) {
-      return Fish;
-    }
-    if (name.includes('cafe') || name.includes('desayuno')) {
-      return Coffee;
-    }
-    if (name.includes('helado')) {
-      return IceCreamCone;
-    }
-    if (name.includes('postre') || name.includes('torta') || name.includes('pastel') || name.includes('dulce')) {
-      return CakeSlice;
-    }
-    if (name.includes('bebida') || name.includes('refresco') || name.includes('jugo') || name.includes('soda')) {
-      return GlassWater;
-    }
-    if (name.includes('licor') || name.includes('coctel') || name.includes('vino') || name.includes('cerveza')) {
-      return Martini;
-    }
-
-    if (category.station === 'BAR') {
-      return Martini;
-    }
-
-    if (category.station === 'PASTRY') {
-      return CakeSlice;
-    }
-
-    return ChefHat;
-  }
-
   const modifierOptions = useMemo(() => {
     const uniqueNames = new Map<string, ModifierOption>();
 
@@ -721,14 +680,6 @@ export default function PosMenuPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => navigate('/dashboard')}
-              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
-            >
-              <AppIcon icon={LayoutDashboard} className="h-4 w-4" />
-              Panel
-            </button>
-            <button
-              type="button"
               onClick={() => navigate('/pos/mesas')}
               className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
             >
@@ -754,10 +705,11 @@ export default function PosMenuPage() {
               <AppIcon icon={ArrowLeftRight} className="h-4 w-4" />
               Cambiar mesa
             </button>
+            <ActiveUserLabel height="h-11 sm:h-12 lg:h-14" />
             <button
               type="button"
               onClick={logout}
-              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 text-sm font-semibold text-rose-900 transition hover:bg-rose-500/15 dark:text-white sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
+              className="session-exit inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-semibold transition sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
             >
               <AppIcon icon={LogOut} className="h-4 w-4" />
               Cerrar sesión

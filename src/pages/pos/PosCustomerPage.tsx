@@ -1,7 +1,8 @@
-import { AlertTriangle, ArrowLeft, LayoutDashboard, LogOut, MenuSquare, Phone, Search, UserCheck } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, LogOut, MenuSquare, Phone, Search, UserCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { normalizePhone } from '@/lib/customers';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -121,18 +122,11 @@ export default function PosCustomerPage() {
             <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400 sm:text-base lg:text-lg">Mesa: {table?.code ?? 'No seleccionada'}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
-            >
-              <AppIcon icon={LayoutDashboard} className="h-4 w-4" />
-              Panel
-            </button>
+            <ActiveUserLabel height="h-11 sm:h-12 lg:h-14" />
             <button
               type="button"
               onClick={logout}
-              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 text-sm font-semibold text-rose-900 transition hover:bg-rose-500/15 dark:text-white sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
+              className="session-exit inline-flex h-11 items-center gap-2 rounded-2xl border px-4 text-sm font-semibold transition sm:h-12 sm:text-base lg:h-14 lg:px-5 lg:text-lg"
             >
               <AppIcon icon={LogOut} className="h-4 w-4" />
               Cerrar sesión

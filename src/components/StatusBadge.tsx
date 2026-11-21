@@ -1,9 +1,9 @@
 import { cn } from '@/lib/utils';
 
 const styles: Record<string, string> = {
-  FREE: 'bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30',
-  OCCUPIED: 'bg-amber-500/12 text-amber-700 ring-amber-500/25 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-500/30',
-  RESERVED: 'bg-sky-500/12 text-sky-700 ring-sky-500/25 dark:bg-sky-500/15 dark:text-sky-200 dark:ring-sky-500/30',
+  FREE: 'bg-emerald-100 text-emerald-800 ring-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-700',
+  OCCUPIED: 'bg-amber-100 text-amber-800 ring-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-700',
+  RESERVED: 'bg-sky-100 text-sky-800 ring-sky-300 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-700',
   OPEN: 'bg-slate-500/12 text-slate-700 ring-slate-400/25 dark:bg-slate-500/15 dark:text-slate-200 dark:ring-slate-400/30',
   IN_PREPARATION: 'bg-orange-500/12 text-orange-700 ring-orange-500/25 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-500/30',
   READY: 'bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-500/30',

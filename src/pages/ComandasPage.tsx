@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isStation, stationGroup } from '../../shared/station-groups';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { Panel } from '@/components/Panel';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { StatusBadge } from '@/components/StatusBadge';
+import { MergedStationBadge } from '@/components/MergedStationBadge';
+import { printReceipt } from '@/lib/printing/print-service';
+import { receiptItemNote } from '@/lib/printing/receipt-builders';
 import { updateStationItemStatus } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import type { KitchenOrder } from '@/types/restaurant';
@@ -11,7 +16,7 @@ type KitchenItem = KitchenOrder['items'][number];
 
 function stationLabel(station: KitchenOrder['station']) {
   if (station === 'BAR') {
-    return 'Bar';
+    return 'Barra';
   }
 
   if (station === 'PASTRY') {
@@ -78,6 +83,10 @@ export default function ComandasPage() {
     const raw = (searchParams.get('station') ?? '').toUpperCase();
     return raw === 'KITCHEN' || raw === 'BAR' || raw === 'PASTRY' ? (raw as KitchenOrder['station']) : null;
   }, [searchParams]);
+  const layout = snapshot?.brand.stationLayout;
+  const baseStation = isStation(user?.role) ? user.role : stationFilter;
+  const visibleGroup = useMemo(() => baseStation ? stationGroup(layout, baseStation) : null, [layout, baseStation]);
+  const groupTitle = visibleGroup?.map(stationLabel).join(' + ') ?? 'Todas las áreas';
 
   const allOrders = useMemo(() => {
     const kitchenOrders = snapshot?.kitchenOrders ?? [];
@@ -89,12 +98,12 @@ export default function ComandasPage() {
   const filteredOrders = useMemo(() => {
     const visibleOrders = allOrders.filter((order) => order.status !== 'DELIVERED');
 
-    if (!stationFilter) {
+    if (!visibleGroup) {
       return visibleOrders;
     }
 
-    return visibleOrders.filter((order) => order.station === stationFilter);
-  }, [allOrders, stationFilter]);
+    return visibleOrders.filter((order) => visibleGroup.includes(order.station));
+  }, [allOrders, visibleGroup]);
 
   useEffect(() => {
     if (!user) {
@@ -159,21 +168,43 @@ export default function ComandasPage() {
           key={`${order.id}-${order.station}`}
           className="w-full max-w-[390px] justify-self-center rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-zinc-950/50 dark:shadow-none"
         >
+          <MergedStationBadge layout={layout} station={order.station} />
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 rounded-xl bg-slate-900 px-3 py-2 text-white dark:bg-slate-100 dark:text-slate-950">
+            <span className="text-sm font-semibold">Tiempo</span>
+            <span role="timer" aria-label="Tiempo de la comanda" className="text-3xl font-bold leading-none tabular-nums sm:text-4xl">
+              {chronometer}
+            </span>
+          </div>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{order.code}</p>
+              <p className="text-xs text-slate-500 dark:text-zinc-400">Abrió el pedido: {order.openedByName ?? 'Sin registrar'}</p>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-500">
                 {stationLabel(order.station)}
-                {order.tableCode ? ` • ${order.tableCode}` : ''}
+                {order.tableCode && <> • <span className="table-code">{order.tableCode}</span></>}
               </p>
               <p className="mt-1 truncate text-xs text-slate-700 dark:text-zinc-200">{order.customerName}</p>
               <p className="truncate text-xs text-slate-500 dark:text-zinc-400">{order.area}</p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
               <StatusBadge value={order.priority} />
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold tracking-[0.18em] text-slate-700 dark:border-white/10 dark:bg-black/20 dark:text-zinc-200">
-                {chronometer}
-              </span>
+              <button type="button" className="rounded-xl border px-3 py-2 text-xs font-semibold"
+                onClick={() => {
+                  setErrorMessage(null);
+                  void printReceipt({
+                    title: `COMANDA: ${stationLabel(order.station)}`,
+                    brandName: snapshot?.brand.name ?? 'Restaurante',
+                    printedAt: new Date().toLocaleString('es-GT'),
+                    metadata: [
+                      { label: 'Pedido', value: order.code },
+                      { label: 'Mesa / cliente', value: order.tableCode ?? order.customerName },
+                      { label: 'Abrió el pedido', value: order.openedByName ?? 'Sin registrar' },
+                    ],
+                    items: order.items.map(item => ({ left: `${item.quantity} x ${item.product}`, note: receiptItemNote(item) })),
+                  }).catch(error => setErrorMessage(error instanceof Error ? error.message : 'No se pudo imprimir la comanda.'));
+                }}>
+                Imprimir comanda
+              </button>
             </div>
           </div>
 
@@ -189,6 +220,7 @@ export default function ComandasPage() {
                       <p className="text-sm font-semibold leading-5 text-slate-900 dark:text-white">
                         {item.quantity} x {item.product}
                       </p>
+                      <p className="text-xs text-slate-600 dark:text-zinc-300">Envió: {item.sentByName ?? 'Sin registrar'}</p>
                       {item.notes ? <p className="mt-0.5 text-[11px] leading-4 text-slate-500 dark:text-zinc-400">Obs: {item.notes}</p> : null}
                     </div>
                     <StatusBadge value={item.status} className="shrink-0" />
@@ -220,6 +252,7 @@ export default function ComandasPage() {
   if (isKds) {
     return (
       <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6">
+        <div className="mb-3 flex items-center justify-between gap-3"><h1 className="text-lg font-semibold">{groupTitle}</h1><ActiveUserLabel /></div>
         {errorMessage ? (
           <div className="mb-4 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-100">
             {errorMessage}
@@ -242,8 +275,11 @@ export default function ComandasPage() {
             { key: 'KITCHEN', label: 'Cocina' },
             { key: 'BAR', label: 'Bar' },
             { key: 'PASTRY', label: 'Pastelería' },
-          ].map((option) => {
-            const active = option.key === 'ALL' ? !stationFilter : stationFilter === option.key;
+          ].filter(option => {
+            if (isStation(user?.role)) return option.key === user.role;
+            return !isStation(option.key) || stationGroup(layout, option.key)[0] === option.key;
+          }).map((option) => {
+            const active = option.key === 'ALL' ? !baseStation : isStation(option.key) && visibleGroup?.includes(option.key);
             return (
               <button
                 key={option.key}
@@ -261,7 +297,7 @@ export default function ComandasPage() {
                     : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.06]'
                 }`}
               >
-                {option.label}
+                {isStation(option.key) ? stationGroup(layout, option.key).map(stationLabel).join(' + ') : option.label}
               </button>
             );
           })}

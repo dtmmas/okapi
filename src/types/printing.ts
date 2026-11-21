@@ -20,8 +20,12 @@ export type ReceiptSection = {
 };
 
 export type ReceiptDocument = {
+  brandLines?: string[];
+  companyDetails?: { address?: string; phone?: string; slogan?: string };
+  paperWidthMm?: number;
   title: string;
   brandName: string;
+  logoPng?: string;
   printedAt: string;
   metadata: ReceiptKeyValue[];
   items?: ReceiptLineItem[];

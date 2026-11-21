@@ -30,3 +30,6 @@ backups
 *.sln
 *.sw?
 .vite
+android/**/.gradle
+android/**/build
+android/**/local.properties

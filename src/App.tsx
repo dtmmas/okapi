@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
+import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { applyBrowserBrand } from '@/lib/browser-brand';
 import { buildMenuSectionRoots, findMenuSectionRootByQueryValue } from '@/lib/menu-sections';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -77,6 +78,21 @@ function ProtectedLayout() {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  const copy = location.pathname === '/menu' && snapshot
+    ? getMenuPageCopy(location.search, buildMenuSectionRoots(snapshot.menuCategories))
+    : pageTitles[location.pathname] || pageTitles['/dashboard'];
+  const brand = snapshot?.brand;
+
+  useEffect(() => {
+    if (brand) {
+      applyBrowserBrand({
+        brandName: brand.name,
+        logoData: brand.logoData ?? null,
+        pageTitle: copy.title,
+      });
+    }
+  }, [copy.title, brand]);
+
   if (!token) {
     return <Navigate to="/login" replace />;
   }
@@ -89,17 +105,8 @@ function ProtectedLayout() {
     );
   }
 
+  if (user.permissions.includes('KIOSK_ONLY')) return <Navigate to="/kiosk" replace />;
   const currentBranch = snapshot.branches.find((branch) => branch.id === user.branchId);
-  const menuSectionRoots = buildMenuSectionRoots(snapshot.menuCategories);
-  const copy = location.pathname === '/menu' ? getMenuPageCopy(location.search, menuSectionRoots) : pageTitles[location.pathname] || pageTitles['/dashboard'];
-
-  useEffect(() => {
-    applyBrowserBrand({
-      brandName: snapshot.brand.name,
-      logoData: snapshot.brand.logoData ?? null,
-      pageTitle: copy.title,
-    });
-  }, [copy.title, snapshot.brand.logoData, snapshot.brand.name]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-[#07070a] dark:text-white">
@@ -191,6 +198,10 @@ function FullscreenLayout() {
     );
   }
 
+  if (user.permissions.includes('KIOSK_ONLY')) {
+    return location.pathname === '/kiosk' ? <Outlet /> : <Navigate to="/kiosk" replace />;
+  }
+
   if ((location.pathname.startsWith('/pos') || location.pathname.startsWith('/kiosk')) && user.role === 'WAITER' && !snapshot.cashShift?.isOpen) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-slate-900 dark:bg-[#07070a] dark:text-white">
@@ -209,10 +220,11 @@ function FullscreenLayout() {
             >
               Reintentar
             </button>
+            <ActiveUserLabel height="h-12" />
             <button
               type="button"
               onClick={logout}
-              className="h-12 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
+              className="session-exit h-12 rounded-2xl border px-5 text-sm font-semibold transition"
             >
               Salir
             </button>
@@ -355,11 +367,31 @@ function CashMovementsRoute() {
   return <CashPage view="movements" />;
 }
 
+function LoginRoute() {
+  const token = useSessionStore(state => state.token);
+  const user = useSessionStore(state => state.user);
+  const [startedSignedOut] = useState(() => !token);
+  if (!token) return <LoginPage />;
+  if (!startedSignedOut || !user) return <Navigate to="/" replace />;
+
+  return (
+    <main className="grid min-h-screen place-items-center bg-slate-50 p-6 text-center dark:bg-[#07070a]">
+      <section className="w-full max-w-md rounded-[32px] border border-slate-200 bg-white px-6 py-10 shadow-sm dark:border-white/10 dark:bg-zinc-900">
+        <h1 className="break-words font-display text-4xl text-slate-950 dark:text-white">Hola, {user.name}</h1>
+        <Link to={getPostLoginPath(user)} replace autoFocus
+          className="mt-8 inline-flex min-h-14 w-full items-center justify-center rounded-2xl bg-amber-400 px-5 text-lg font-semibold text-zinc-950">
+          Toca para iniciar
+        </Link>
+      </section>
+    </main>
+  );
+}
+
 export default function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/login" element={<LoginRoute />} />
         <Route element={<FullscreenLayout />}>
           <Route path="/pos" element={<Navigate to="/pos/mesas" replace />} />
           <Route path="/pos/mesas" element={<PosTablesPage />} />
@@ -391,6 +423,7 @@ export default function App() {
           <Route path="/reportes" element={<ReportsPage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
         </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );

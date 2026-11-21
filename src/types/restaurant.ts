@@ -1,4 +1,5 @@
 export type RoleCode =
+  | 'KIOSK'
   | 'ADMIN'
   | 'SUPERVISOR'
   | 'CASHIER'
@@ -9,6 +10,7 @@ export type RoleCode =
   | 'DELIVERY';
 
 export type PermissionCode =
+  | 'KIOSK_ONLY'
   | 'DASHBOARD_VIEW'
   | 'POS_USE'
   | 'TABLES_MANAGE'
@@ -110,6 +112,7 @@ export type ReportFilters = {
 };
 
 export type ReportsSummary = {
+  activity: Array<{ id: number; branchId: number; actorName: string; actorRole: RoleCode; action: string; reference: string; createdAt: string }>;
   summary: RestaurantSnapshot['reportSummary'];
   salesTrend: SalesPoint[];
   topProducts: ProductPerformance[];
@@ -126,6 +129,7 @@ export type ReportsSummary = {
 };
 
 export type RestaurantOrder = {
+  openedByName?: string | null;
   id: number;
   code: string;
   branchId: number;
@@ -147,10 +151,12 @@ export type RestaurantOrder = {
     product: string;
     quantity: number;
     modifier?: string;
+    sentByName?: string | null;
     notes?: string;
     paid?: boolean;
   }>;
   payments: Array<{
+    collectedByName?: string | null;
     id: number;
     method: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
     amount: number;
@@ -168,9 +174,11 @@ export type RestaurantTable = {
   area: string;
   status: 'FREE' | 'OCCUPIED' | 'RESERVED';
   currentOrder?: string;
+  reservation?: import('../../shared/table-reservation').TableReservationInfo;
 };
 
 export type KitchenOrder = {
+  openedByName?: string | null;
   id: number;
   orderId: number;
   station: 'KITCHEN' | 'BAR' | 'PASTRY';
@@ -183,6 +191,7 @@ export type KitchenOrder = {
   elapsedMinutes: number;
   priority: 'ALTA' | 'MEDIA' | 'BAJA';
   items: Array<{
+    sentByName?: string | null;
     id: number;
     product: string;
     quantity: number;
@@ -215,6 +224,7 @@ export type SubRecipeFormula = {
 };
 
 export type InventoryMovement = {
+  actorName?: string;
   id: number;
   inventoryItemId: number;
   itemName: string;
@@ -325,6 +335,8 @@ export type DeliveryOrder = {
 };
 
 export type CashMovement = {
+  actorName?: string | null;
+  openedByName?: string | null;
   id: number;
   type: 'OPENING' | 'SALE' | 'ENTRY' | 'EXPENSE' | 'WITHDRAWAL';
   reference: string;
@@ -339,12 +351,14 @@ export type CashMovement = {
   orderPaidAmount?: number;
   orderPendingAmount?: number;
   orderItems?: Array<{
+    sentByName?: string | null;
     quantity: number;
     product: string;
     notes?: string;
     lineTotal?: number | null;
   }>;
   orderPayments?: Array<{
+    collectedByName?: string | null;
     method: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
     amount: number;
     reference?: string | null;
@@ -379,6 +393,9 @@ export type RestaurantSnapshot = {
   brand: {
     name: string;
     slogan: string;
+    stationLayout?: string;
+    address?: string;
+    phone?: string;
     currencyCode: string;
     currencySymbol: string;
     logoData?: string | null;

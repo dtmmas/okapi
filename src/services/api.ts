@@ -212,7 +212,7 @@ export function payOrder(payload: {
   proofImage?: string | null;
   appliedItemIds?: number[] | null;
 }) {
-  return apiRequest<{ success: true; completed: boolean; paidAmount: number; remainingAmount: number; registeredAmount: number }>(
+  return apiRequest<{ success: true; completed: boolean; paidAmount: number; remainingAmount: number; registeredAmount: number; collectedByName: string | null }>(
     `/api/v1/orders/${payload.orderId}/pay`,
     {
     method: 'POST',
@@ -237,6 +237,7 @@ export function createOrUpdateOrder(payload: {
   };
   type: 'DINE_IN' | 'TAKE_OUT' | 'DELIVERY';
   channel?: string;
+  kioskKey?: string;
   items: Array<{
     productId: number;
     quantity: number;
@@ -262,21 +263,23 @@ export function moveTableAccount(payload: { fromTableId: number; toTableId: numb
   });
 }
 
-export function updateTableStatus(payload: { tableId: number; status: 'FREE' | 'RESERVED' }) {
-  return apiRequest<{ success: true }>(`/api/v1/tables/${payload.tableId}/status`, {
+type TableChange = import('../../shared/table-reservation').ReservationChange & { tableId: number };
+
+export function updateTableStatus({ tableId, ...change }: TableChange) {
+  return apiRequest<{ success: true }>(`/api/v1/tables/${tableId}/status`, {
     method: 'PUT',
-    body: JSON.stringify({ status: payload.status }),
+    body: JSON.stringify(change),
   });
 }
 
-export function updateTableReservation(payload: { tableId: number; status: 'FREE' | 'RESERVED' }) {
-  return apiRequest<{ success: true }>(`/api/v1/tables/${payload.tableId}/reservation`, {
+export function updateTableReservation({ tableId, ...change }: TableChange & { kioskKey: string }) {
+  return apiRequest<{ success: true }>(`/api/v1/tables/${tableId}/reservation`, {
     method: 'PUT',
-    body: JSON.stringify({ status: payload.status }),
+    body: JSON.stringify(change),
   });
 }
 
-export function releaseTableReservationKeepalive(tableId: number) {
+export function releaseTableReservationKeepalive(tableId: number, kioskKey: string) {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
   if (!token || !Number.isInteger(tableId) || tableId <= 0) {
     return;
@@ -289,7 +292,7 @@ export function releaseTableReservationKeepalive(tableId: number) {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ status: 'FREE' }),
+    body: JSON.stringify({ status: 'FREE', kioskKey }),
   }).catch(() => undefined);
 }
 
@@ -350,6 +353,12 @@ export function updateStationItemStatus(payload: {
 
 export function listUsers() {
   return apiRequest<UserSummary[]>('/api/v1/users');
+}
+
+export function suggestUserEmail(names: string, firstSurname: string, secondSurname: string) {
+  return apiRequest<{ email: string | null }>('/api/v1/users/email-suggestion', {
+    method: 'POST', body: JSON.stringify({ names, firstSurname, secondSurname }),
+  });
 }
 
 export function getRolesConfiguration() {

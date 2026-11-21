@@ -2112,7 +2112,7 @@ export default function InventoryPage() {
                       <div>
                         <p className="font-semibold text-slate-950 dark:text-white">{movement.itemName}</p>
                         <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">
-                          {movement.reference} • {new Date(movement.createdAt).toLocaleString('es-GT')}
+                          {movement.reference} • {new Date(movement.createdAt).toLocaleString('es-GT')} • {movement.actorName ?? 'Sin registrar'}
                         </p>
                       </div>
                       <div className={`rounded-2xl px-3 py-1 text-sm font-semibold ${movement.quantityChange >= 0 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-200' : 'bg-rose-500/10 text-rose-700 dark:text-rose-200'}`}>

@@ -56,16 +56,29 @@ export async function requireAuth(req: ApiRequest, res: Response, next: NextFunc
     }
 
     req.authUser = sanitizeSessionUser(user);
+    if (user.permissions.includes('KIOSK_ONLY')) {
+      const route = `${req.method} ${req.baseUrl}${req.route.path}`;
+      if (!kioskRoutes.has(route)) {
+        return res.status(403).json({ success: false, message: 'Cuenta exclusiva de autoservicio.' });
+      }
+    }
     return next();
   } catch {
     return res.status(401).json({ success: false, message: 'Token expirado o invalido.' });
   }
 }
 
-export function requirePermissions(permissions: PermissionCode[]) {
+const kioskRoutes = new Set([
+  'GET /api/auth/me', 'GET /api/v1/bootstrap',
+  'POST /api/v1/orders', 'PUT /api/v1/tables/:tableId/reservation',
+]);
+
+export function requirePermissions(permissions: PermissionCode[], allowKiosk = false) {
   return (req: ApiRequest, res: Response, next: NextFunction) => {
     const currentPermissions = req.authUser?.permissions ?? [];
-    const hasAccess = permissions.every((permission) => currentPermissions.includes(permission));
+    const hasAccess = currentPermissions.includes('KIOSK_ONLY')
+      ? allowKiosk
+      : permissions.every((permission) => currentPermissions.includes(permission));
 
     if (!hasAccess) {
       return res.status(403).json({ success: false, message: 'No tienes permisos para esta accion.' });

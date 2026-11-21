@@ -17,6 +17,7 @@ RUN npm install
 
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/api ./api
+COPY --from=build /app/shared ./shared
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/public ./public
 COPY --from=build /app/.env.example ./.env.example

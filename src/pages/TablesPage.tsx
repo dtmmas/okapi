@@ -3,7 +3,9 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { Panel } from '@/components/Panel';
-import { StatusBadge } from '@/components/StatusBadge';
+import { TableCapacity } from '@/components/TableCapacity';
+import { TableStatusControl } from '@/components/TableReservationDetails';
+import { useTableRefresh } from '@/hooks/useTableRefresh';
 import { getAreaIcon } from '@/lib/area-icons';
 import { getNextTableCode, getSortedAreas, normalizeAreaName } from '@/lib/tables';
 import { createTable, deleteTable, moveTableAccount, updateTable, updateTableStatus } from '@/services/api';
@@ -64,9 +66,7 @@ export default function TablesPage() {
   const [deleteAreaState, setDeleteAreaState] = useState<DeleteAreaState | null>(null);
   const [deleteTableId, setDeleteTableId] = useState<number | null>(null);
 
-  useEffect(() => {
-    void refreshSnapshot();
-  }, [refreshSnapshot]);
+  useTableRefresh(refreshSnapshot);
 
   useEffect(() => {
     if (!tables.length) {
@@ -280,7 +280,9 @@ export default function TablesPage() {
     closeDeleteDialogs();
   }
 
-  async function handleReserve() {
+  async function handleReserve(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const fields = new FormData(event.currentTarget);
     if (!selectedTable) {
       return;
     }
@@ -291,7 +293,11 @@ export default function TablesPage() {
       if (selectedTable.status !== 'FREE') {
         throw new Error('Solo puedes reservar una mesa que esté libre.');
       }
-      await updateTableStatus({ tableId: selectedTable.id, status: 'RESERVED' });
+      const name = String(fields.get('name') ?? '').trim();
+      if (!name) throw new Error('Ingresa el nombre de quien reserva.');
+      await updateTableStatus({ tableId: selectedTable.id, status: 'RESERVED', reservation: {
+        name, address: String(fields.get('address') ?? '').trim(), guests: Number(fields.get('guests')),
+      } });
       await refreshSnapshot();
       setSuccess(`Mesa ${selectedTable.code} reservada.`);
     } catch (err) {
@@ -572,41 +578,35 @@ export default function TablesPage() {
                   </p>
                 </div>
               ) : null}
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="isolate grid gap-x-2.5 gap-y-4 md:grid-cols-2">
                 {groupTables.length === 0 ? (
                   <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500">
                     Aún no hay mesas en esta área.
                   </div>
                 ) : null}
                 {groupTables.map((table) => (
-                  <button
+                  <div
                     key={table.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedTableId(table.id);
-                      fillTableForm(table.id);
-                    }}
-                    className={`rounded-[26px] border bg-gradient-to-br p-5 text-left transition ${
-                      selectedTableId === table.id
-                        ? 'border-amber-300/35 from-amber-300/10 to-white shadow-sm dark:to-transparent dark:shadow-none'
-                        : 'border-slate-200 from-white to-slate-50 hover:border-slate-300 dark:border-white/10 dark:from-white/[0.05] dark:to-transparent dark:hover:border-white/20'
-                    }`}
+                    data-table-status={table.status}
+                    className={`relative rounded-[26px] border p-5 text-left transition ${selectedTableId === table.id ? 'ring-2 ring-slate-700 dark:ring-white' : ''}`}
                   >
+                    <button type="button" aria-label={`Seleccionar mesa ${table.code}`} aria-pressed={selectedTableId === table.id}
+                      className="absolute inset-0 rounded-[inherit]" onClick={() => { setSelectedTableId(table.id); fillTableForm(table.id); }} />
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <p className="font-display text-3xl text-slate-950 dark:text-white">{table.code}</p>
+                        <p className="table-code text-3xl text-slate-950 dark:text-white">{table.code}</p>
                         <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">
                           {branches.find((branch) => branch.id === table.branchId)?.name ?? 'Sucursal sin definir'}
                         </p>
                       </div>
-                      <StatusBadge value={table.status} />
+                      <TableStatusControl table={table} />
                     </div>
                     <div className="mt-6 space-y-2 text-sm text-slate-600 dark:text-zinc-300">
-                      <p>Capacidad: {table.capacity} personas</p>
+                      <TableCapacity capacity={table.capacity} />
                       <p>Orden activa: {table.currentOrder || 'Sin pedido'}</p>
                       <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">Toca la mesa para modificar sus datos</p>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             </section>
@@ -616,6 +616,7 @@ export default function TablesPage() {
 
       <div className="space-y-6">
         <Panel title="Operación de mesa" subtitle={selectedTable ? `Mesa ${selectedTable.code} • ${selectedTable.area}` : 'Selecciona una mesa para operar.'}>
+          {selectedTable && <div className="mb-4"><TableCapacity capacity={selectedTable.capacity} /></div>}
           {error ? (
             <div className="mb-4 rounded-[24px] border border-rose-400/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-700 dark:text-rose-200">{error}</div>
           ) : null}
@@ -667,10 +668,20 @@ export default function TablesPage() {
               </div>
             </div>
 
+            {selectedTable?.status === 'FREE' && <form key={selectedTable.id} onSubmit={handleReserve} className="grid gap-3 rounded-2xl border border-slate-200 p-4 dark:border-white/10">
+              <h3 className="font-semibold">Datos de la reserva</h3>
+              <label className="text-sm">Nombre de quien reserva
+                <input name="name" required maxLength={150} className="mt-1 w-full rounded-xl border bg-transparent p-2" />
+              </label>
+              <label className="text-sm">Dirección (opcional)
+                <input name="address" maxLength={250} className="mt-1 w-full rounded-xl border bg-transparent p-2" />
+              </label>
+              <label className="text-sm">Personas que asistirán
+                <input name="guests" type="number" min={1} max={selectedTable.capacity} defaultValue={1} required className="mt-1 w-full rounded-xl border bg-transparent p-2" />
+              </label>
             <button
-              type="button"
-              disabled={!selectedTable || submitting || selectedTable?.status !== 'FREE'}
-              onClick={() => void handleReserve()}
+              type="submit"
+              disabled={submitting}
               className="flex h-14 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 text-left text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
             >
               <span className="flex items-center gap-2">
@@ -679,6 +690,7 @@ export default function TablesPage() {
               </span>
               <span className="text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">Reserva</span>
             </button>
+            </form>}
 
             <button
               type="button"

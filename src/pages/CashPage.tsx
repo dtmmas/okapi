@@ -4,6 +4,7 @@ import { Printer } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/AppIcon';
 import { printReceipt } from '@/lib/printing/print-service';
+import { receiptItemNote } from '@/lib/printing/receipt-builders';
 import { Panel } from '@/components/Panel';
 import { StatusBadge } from '@/components/StatusBadge';
 import { closeAdminCashShift, closeCashShift, createCashMovement, listAdminCashShifts, openCashShift } from '@/services/api';
@@ -251,13 +252,14 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
       printedAt,
       metadata: [
         { label: 'Cuenta', value: group.orderCode },
+        { label: 'Abrió el pedido', value: group.payments[0]?.openedByName ?? 'Sin registrar' },
         { label: 'Mesa', value: group.tableCode ?? '-' },
         { label: 'Cliente', value: group.customerName ?? 'Consumidor final' },
       ],
       items: group.orderItems?.map((item) => ({
         left: `${item.quantity} x ${item.product}`,
         right: item.lineTotal !== null && item.lineTotal !== undefined ? formatMoney(item.lineTotal, currencySymbol) : '',
-        note: item.notes,
+        note: receiptItemNote(item),
       })),
       emptyItemsLabel: 'Sin detalle disponible.',
       summary: [
@@ -274,6 +276,7 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
                   title: formatPaymentMethodLabel(payment.method),
                   lines: [
                     formatMoney(payment.amount, currencySymbol),
+                    `Cobró: ${payment.collectedByName ?? 'Sin registrar'}`,
                     new Intl.DateTimeFormat('es-GT', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(payment.createdAt)),
                     ...(payment.reference ? [`Ref: ${payment.reference}`] : []),
                   ],
@@ -295,6 +298,8 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
       brandName,
       printedAt,
       metadata: [
+        { label: 'Abrió el pedido', value: group.payments[0]?.openedByName ?? 'Sin registrar' },
+        { label: 'Cobró', value: payment.collectedByName ?? 'Sin registrar' },
         { label: 'Cuenta', value: group.orderCode },
         { label: 'Mesa', value: group.tableCode ?? '-' },
         { label: 'Cliente', value: group.customerName ?? 'Consumidor final' },
@@ -626,7 +631,7 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
                         className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/70 bg-slate-50 px-4 py-3 dark:border-white/8 dark:bg-black/20"
                       >
                         <div>
-                          <p className="text-sm font-semibold text-slate-900 dark:text-white">{payment.createdAt}</p>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white">{payment.createdAt} · Cobró: {payment.actorName ?? 'Sin registrar'}</p>
                           <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{formatAuditDetail(payment)}</p>
                         </div>
                         <div className="text-right">
@@ -648,7 +653,7 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
               <article key={movement.id} className="flex items-center justify-between gap-4 rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-sm dark:border-white/8 dark:bg-zinc-950/45 dark:shadow-none">
                 <div>
                   <p className="font-semibold text-slate-950 dark:text-white">{movement.reference}</p>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">{movement.createdAt}</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">{movement.createdAt} · {movement.actorName ?? 'Sin registrar'}</p>
                   {(movement.method === 'CARD' || movement.method === 'TRANSFER' || movement.method === 'MIXED') && movement.paymentReference ? (
                     <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{formatAuditDetail(movement)}</p>
                   ) : null}

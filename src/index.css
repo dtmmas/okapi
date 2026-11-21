@@ -75,6 +75,36 @@ select {
   font-family: "Space Grotesk", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
+.table-code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+[data-table-status] {
+  @apply bg-white hover:bg-slate-50 dark:bg-zinc-900 dark:hover:bg-zinc-800;
+}
+[data-table-status="FREE"] {
+  @apply border-emerald-500 dark:border-emerald-400;
+}
+[data-table-status="OCCUPIED"] {
+  @apply border-amber-500 dark:border-amber-400;
+}
+[data-table-status="RESERVED"] {
+  @apply border-sky-500 dark:border-sky-400;
+}
+
+.session-exit {
+  background-color: #b91c1c;
+  border-color: #991b1b;
+  color: #fff;
+}
+
+.session-exit:hover:not(:disabled),
+.session-exit:active:not(:disabled) {
+  background-color: #991b1b;
+}
+
 html.light body {
   background:
     radial-gradient(circle at top, rgba(251, 146, 60, 0.12), transparent 22%),
