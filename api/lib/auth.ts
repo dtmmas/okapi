@@ -19,6 +19,7 @@ export type ApiRequest = Request & {
       ? never
       : ReturnType<typeof sanitizeSessionUser>
     : never;
+  authJwt?: AuthPayload;
 };
 
 export function signAccessToken(user: AuthUser) {
@@ -39,6 +40,23 @@ export function verifyAccessToken(token: string) {
   return jwt.verify(token, JWT_SECRET) as unknown as AuthPayload;
 }
 
+/** Valida JWT sin consultar la base (necesario mientras una restauración vacía las tablas). */
+export function requireAuthJwt(req: ApiRequest, res: Response, next: NextFunction) {
+  const authorization = req.headers.authorization;
+
+  if (!authorization?.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'Token no proporcionado.' });
+  }
+
+  try {
+    const token = authorization.replace('Bearer ', '');
+    req.authJwt = verifyAccessToken(token);
+    return next();
+  } catch {
+    return res.status(401).json({ success: false, message: 'Token expirado o invalido.' });
+  }
+}
+
 export async function requireAuth(req: ApiRequest, res: Response, next: NextFunction) {
   const authorization = req.headers.authorization;
 
@@ -52,7 +70,10 @@ export async function requireAuth(req: ApiRequest, res: Response, next: NextFunc
     const user = await findAuthUserById(payload.sub);
 
     if (!user) {
-      return res.status(401).json({ success: false, message: 'Sesion no valida.' });
+      return res.status(401).json({
+        success: false,
+        message: 'Sesion no valida. Cierre sesion e ingrese de nuevo (comun despues de restaurar un respaldo).',
+      });
     }
 
     req.authUser = sanitizeSessionUser(user);

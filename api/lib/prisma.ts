@@ -35,3 +35,9 @@ export function resetDatabaseAvailability() {
   databaseAvailable = null;
   lastDatabaseCheckAt = null;
 }
+
+export async function reconnectPrismaClient() {
+  resetDatabaseAvailability();
+  await prisma.$disconnect();
+  await prisma.$connect();
+}

@@ -26,7 +26,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const data = await loginRequest(email, password);
       localStorage.setItem(authTokenKey, data.accessToken);
-      const snapshot = await getBootstrapSnapshot();
+      let snapshot: RestaurantSnapshot;
+      try {
+        snapshot = await getBootstrapSnapshot();
+      } catch (bootstrapError) {
+        localStorage.removeItem(authTokenKey);
+        const detail =
+          bootstrapError instanceof Error ? bootstrapError.message : 'No fue posible cargar el entorno.';
+        throw new Error(
+          `Credenciales aceptadas, pero falló la carga del sistema: ${detail}. Si acabas de restaurar un respaldo, usa el correo y contraseña del respaldo (no las cuentas de desarrollo) o repite la restauración.`,
+        );
+      }
       set({
         token: data.accessToken,
         user: data.user,
@@ -34,7 +44,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         loading: false,
       });
     } catch (error) {
+      localStorage.removeItem(authTokenKey);
       set({
+        token: null,
+        user: null,
+        snapshot: null,
         loading: false,
         error: error instanceof Error ? error.message : 'No fue posible iniciar sesion.',
       });

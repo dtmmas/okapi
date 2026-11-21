@@ -3,13 +3,28 @@ import { paperWidth, paperWidths, readPaperWidth, savePaperWidth } from '@/lib/p
 import { printReceipt, receiptFormatter } from '@/lib/printing/print-service';
 import { buildReceiptHtml } from '@/lib/printing/receipt-builders';
 import { hasSunmiPrinterBridge } from '@/lib/printing/sunmi-print-provider';
-import { downloadSettingsBackup, getBrandSettings, getSettingsBackupStatus, startSettingsBackup, updateBrandSettings, type BackupMode } from '@/services/api';
+import {
+  downloadSettingsBackup,
+  downloadSettingsBackupArchive,
+  getBrandSettings,
+  getSettingsBackupHistory,
+  getSettingsBackupStatus,
+  importSettingsBackup,
+  startSettingsBackup,
+  startSettingsBackupRestore,
+  updateBrandSettings,
+  type BackupArchiveSummary,
+  type BackupMode,
+} from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
   const snapshot = useSessionStore((state) => state.snapshot);
   const refreshSnapshot = useSessionStore((state) => state.refreshSnapshot);
+  const logout = useSessionStore((state) => state.logout);
   const [name, setName] = useState('');
   const [stationLayout, setStationLayout] = useState('SEPARATE');
   const [companyDetails, setCompanyDetails] = useState({ address: '', phone: '', slogan: '' });
@@ -34,6 +49,10 @@ export default function SettingsPage() {
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupSuccess, setBackupSuccess] = useState<string | null>(null);
   const [backupExportNote, setBackupExportNote] = useState<string | null>(null);
+  const [backupJobOperation, setBackupJobOperation] = useState<'backup' | 'restore' | null>(null);
+  const [backupHistory, setBackupHistory] = useState<BackupArchiveSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [importingBackup, setImportingBackup] = useState(false);
   const formatPreview = useMemo(() => receiptFormatter(logoData), [width, logoData]);
   const sample = useMemo(() => ({
     brandName: name.trim() || 'Restaurante', title: 'PRUEBA DE IMPRESIÓN',
@@ -88,6 +107,25 @@ export default function SettingsPage() {
       });
   }, [snapshot]);
 
+  async function loadBackupHistory() {
+    setHistoryLoading(true);
+    try {
+      const items = await getSettingsBackupHistory();
+      setBackupHistory(items);
+    } catch {
+      setBackupHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!snapshot) {
+      return;
+    }
+    void loadBackupHistory();
+  }, [snapshot]);
+
   useEffect(() => {
     if (!backupJobId || !backupRunning) {
       return;
@@ -105,30 +143,57 @@ export default function SettingsPage() {
         setBackupMessage(status.message);
 
         if (status.status === 'completed') {
-          await downloadSettingsBackup(backupJobId, status.fileName);
-          setBackupRunning(false);
-          setBackupSuccess(
-            backupMode === 'full'
-              ? 'Respaldo completo generado y descargado.'
-              : 'Respaldo de base de datos generado y descargado.',
-          );
-          setBackupExportNote(
-            status.databaseExportMethod === 'generated-sql' && status.databaseExportNote
-              ? status.databaseExportNote
-              : status.databaseExportMethod === 'mysqldump'
-                ? 'Base de datos exportada con mysqldump (formato SQL estándar).'
-                : null,
-          );
+          if (status.operation === 'restore') {
+            setBackupRunning(false);
+            setBackupJobId(null);
+            setBackupMode(null);
+            setBackupJobOperation(null);
+            const hintEmails = status.loginHints?.filter(Boolean) ?? [];
+            const loginHint = hintEmails.length
+              ? `Correos del respaldo: ${hintEmails.join(', ')}. Usa la contraseña guardada en ese respaldo (las cuentas de desarrollo ya no aplican).`
+              : 'Usa el correo y contraseña del respaldo (no las cuentas de desarrollo de abajo).';
+            logout();
+            navigate('/login', {
+              replace: true,
+              state: {
+                notice: `Restauración completada. La base fue reemplazada: vuelve a iniciar sesión. ${loginHint}`,
+              },
+            });
+            return;
+          } else {
+            await downloadSettingsBackup(backupJobId, status.fileName);
+            setBackupRunning(false);
+            setBackupSuccess(
+              backupMode === 'full'
+                ? 'Respaldo completo generado, guardado en el servidor y descargado.'
+                : 'Respaldo de base de datos generado, guardado en el servidor y descargado.',
+            );
+            setBackupExportNote(
+              status.databaseExportMethod === 'generated-sql' && status.databaseExportNote
+                ? status.databaseExportNote
+                : status.databaseExportMethod === 'mysqldump'
+                  ? 'Base de datos exportada con mysqldump (formato SQL estándar).'
+                  : 'Copia archivada en el historial del servidor.',
+            );
+            await loadBackupHistory();
+          }
           setBackupJobId(null);
           setBackupMode(null);
+          setBackupJobOperation(null);
           return;
         }
 
         if (status.status === 'failed') {
           setBackupRunning(false);
-          setBackupError(status.error ?? 'No fue posible completar el respaldo.');
+          setBackupError(
+            status.error ??
+              (status.operation === 'restore'
+                ? 'No fue posible completar la restauración.'
+                : 'No fue posible completar el respaldo.'),
+          );
           setBackupJobId(null);
           setBackupMode(null);
+          setBackupJobOperation(null);
         }
       } catch (err) {
         if (!cancelled) {
@@ -136,6 +201,7 @@ export default function SettingsPage() {
           setBackupError(err instanceof Error ? err.message : 'No fue posible consultar el progreso del respaldo.');
           setBackupJobId(null);
           setBackupMode(null);
+          setBackupJobOperation(null);
         }
       }
     };
@@ -149,7 +215,7 @@ export default function SettingsPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [backupJobId, backupMode, backupRunning]);
+  }, [backupJobId, backupMode, backupRunning, logout, navigate]);
 
   async function handleBackup(mode: BackupMode) {
     if (backupRunning) {
@@ -163,6 +229,7 @@ export default function SettingsPage() {
     setBackupProgress(0);
     setBackupMessage('Iniciando...');
     setBackupMode(mode);
+    setBackupJobOperation('backup');
 
     try {
       const started = await startSettingsBackup(mode);
@@ -173,7 +240,62 @@ export default function SettingsPage() {
       setBackupRunning(false);
       setBackupMode(null);
       setBackupJobId(null);
+      setBackupJobOperation(null);
       setBackupError(err instanceof Error ? err.message : 'No fue posible iniciar el respaldo.');
+    }
+  }
+
+  async function handleRestoreArchive(archive: BackupArchiveSummary) {
+    if (backupRunning) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Restaurar "${archive.fileName}"?\n\nEsto reemplazará los datos actuales${archive.mode === 'full' ? ' y las imágenes del menú' : ''}. Esta acción no se puede deshacer.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setBackupRunning(true);
+    setBackupError(null);
+    setBackupSuccess(null);
+    setBackupExportNote(null);
+    setBackupProgress(0);
+    setBackupMessage('Iniciando restauración...');
+    setBackupJobOperation('restore');
+    setBackupMode(archive.mode);
+
+    try {
+      const started = await startSettingsBackupRestore(archive.id);
+      setBackupJobId(started.jobId);
+      setBackupProgress(started.progress);
+      setBackupMessage(started.message);
+    } catch (err) {
+      setBackupRunning(false);
+      setBackupJobOperation(null);
+      setBackupMode(null);
+      setBackupError(err instanceof Error ? err.message : 'No fue posible iniciar la restauración.');
+    }
+  }
+
+  async function handleImportBackup(file: File | null) {
+    if (!file || backupRunning || importingBackup) {
+      return;
+    }
+
+    setImportingBackup(true);
+    setBackupError(null);
+    setBackupSuccess(null);
+
+    try {
+      await importSettingsBackup(file);
+      setBackupSuccess(`Respaldo "${file.name}" importado al historial del servidor.`);
+      await loadBackupHistory();
+    } catch (err) {
+      setBackupError(err instanceof Error ? err.message : 'No fue posible importar el respaldo.');
+    } finally {
+      setImportingBackup(false);
     }
   }
 
@@ -387,9 +509,9 @@ export default function SettingsPage() {
         )}
       </Panel>
 
-      <Panel title="Respaldos" subtitle="Copias de seguridad descargables con seguimiento en vivo">
+      <Panel title="Respaldos" subtitle="Crear, historial, descargar, importar y restaurar">
         <p className="text-sm text-slate-600 dark:text-zinc-400">
-          Genera un archivo para guardar fuera del servidor. Solo puede ejecutarse un respaldo a la vez.
+          Cada respaldo exitoso queda guardado en el servidor (historial). Solo puede ejecutarse una tarea a la vez.
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -450,6 +572,81 @@ export default function SettingsPage() {
             {backupExportNote ? <p className="mt-2 text-xs text-emerald-900/80 dark:text-emerald-100/90">{backupExportNote}</p> : null}
           </div>
         ) : null}
+
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-white/10 dark:bg-white/[0.03]">
+          <p className="text-sm font-semibold text-slate-950 dark:text-white">Importar respaldo</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">Sube un archivo .sql o .zip generado por Okapi u otro entorno compatible.</p>
+          <input
+            type="file"
+            accept=".sql,.zip,application/zip,text/plain"
+            disabled={backupRunning || importingBackup}
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              event.target.value = '';
+              void handleImportBackup(file);
+            }}
+            className="mt-3 block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm file:mr-4 file:rounded-xl file:border-0 file:bg-slate-100 file:px-4 file:py-2 file:text-sm file:font-semibold dark:border-white/10 dark:bg-black/30 dark:file:bg-white/[0.08]"
+          />
+        </div>
+
+        <div className="mt-6">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-slate-950 dark:text-white">Historial en el servidor</p>
+            <button
+              type="button"
+              disabled={historyLoading}
+              onClick={() => void loadBackupHistory()}
+              className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:border-white/10 dark:text-zinc-200"
+            >
+              {historyLoading ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+
+          {historyLoading && !backupHistory.length ? (
+            <p className="mt-3 text-sm text-slate-500 dark:text-zinc-500">Cargando historial...</p>
+          ) : backupHistory.length ? (
+            <div className="mt-3 space-y-2">
+              {backupHistory.map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-white/10 dark:bg-black/20"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{item.fileName}</p>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">
+                        {new Date(item.createdAt).toLocaleString('es-GT')} · {item.sizeLabel} ·{' '}
+                        {item.mode === 'full' ? 'Completo' : 'Solo BD'} · {item.source === 'import' ? 'Importado' : 'Sistema'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={backupRunning}
+                        onClick={() => void downloadSettingsBackupArchive(item.id, item.fileName)}
+                        className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:border-white/10 dark:text-zinc-200"
+                      >
+                        Descargar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={backupRunning}
+                        onClick={() => void handleRestoreArchive(item)}
+                        className="rounded-xl border border-amber-300/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-900 dark:text-amber-100"
+                      >
+                        Restaurar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-slate-500 dark:border-white/10 dark:text-zinc-500">
+              Aún no hay respaldos guardados en el servidor.
+            </p>
+          )}
+        </div>
       </Panel>
 
       <Panel title="Capacidades activables" subtitle="Hoja de ruta tecnica y comercial">

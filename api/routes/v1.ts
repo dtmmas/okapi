@@ -5,7 +5,7 @@ import multer from 'multer';
 import { Router } from 'express';
 import { z } from 'zod';
 import { layouts } from '../lib/station-groups.js';
-import { requireAuth, requirePermissions, type ApiRequest } from '../lib/auth.js';
+import { requireAuth, requireAuthJwt, requirePermissions, type ApiRequest } from '../lib/auth.js';
 import { buildMenuUploadUrl, menuUploadsDir } from '../lib/uploads.js';
 import {
   adjustInventoryStockForUser,
@@ -77,7 +77,15 @@ import {
   produceSubRecipeForUser,
   requestOrderBillForUser,
 } from '../services/restaurant-service.js';
-import { getBackupDownloadPath, getBackupJob, startBackupJob } from '../services/backup-service.js';
+import {
+  getBackupArchiveDownloadPath,
+  getBackupDownloadPath,
+  getBackupJob,
+  importBackupArchiveFile,
+  listBackupArchives,
+  startBackupJob,
+  startRestoreJob,
+} from '../services/backup-service.js';
 
 const router = Router();
 const roleCodeValues = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAITER', 'KITCHEN', 'BAR', 'PASTRY', 'DELIVERY', 'KIOSK'] as const;
@@ -208,6 +216,103 @@ const backupModeSchema = z.object({
   mode: z.enum(['database', 'full']),
 });
 
+const backupRoot = path.resolve(process.cwd(), 'backups', 'generated');
+const backupImportDir = path.join(backupRoot, 'imports-temp');
+
+const backupImportUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      fs.mkdirSync(backupImportDir, { recursive: true });
+      callback(null, backupImportDir);
+    },
+    filename: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase() || '.sql';
+      callback(null, `${Date.now()}-${randomUUID()}${extension}`);
+    },
+  }),
+  limits: {
+    fileSize: 500 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, callback) => {
+    if (!/\.(sql|zip)$/i.test(file.originalname)) {
+      callback(new Error('Solo se permiten respaldos .sql o .zip.'));
+      return;
+    }
+    callback(null, true);
+  },
+});
+
+router.get('/settings/backups/history', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (_req: ApiRequest, res) => {
+  res.json({ success: true, data: await listBackupArchives() });
+});
+
+router.post('/settings/backups/import', requireAuth, requirePermissions(['SETTINGS_MANAGE']), (req: ApiRequest, res) => {
+  backupImportUpload.single('backup')(req, res, async (error: unknown) => {
+    if (error) {
+      const message =
+        error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE'
+          ? 'El archivo excede el límite de 500 MB.'
+          : error instanceof Error
+            ? error.message
+            : 'No fue posible importar el respaldo.';
+      res.status(400).json({ success: false, message });
+      return;
+    }
+
+    if (!req.file) {
+      res.status(400).json({ success: false, message: 'Debes seleccionar un archivo de respaldo.' });
+      return;
+    }
+
+    try {
+      const record = await importBackupArchiveFile(req.file.path, req.file.originalname, req.authUser.id);
+      await fs.promises.unlink(req.file.path).catch(() => undefined);
+      res.status(201).json({ success: true, data: record });
+    } catch (importError) {
+      await fs.promises.unlink(req.file.path).catch(() => undefined);
+      res.status(400).json({
+        success: false,
+        message: importError instanceof Error ? importError.message : 'No fue posible importar el respaldo.',
+      });
+    }
+  });
+});
+
+router.get('/settings/backups/archives/:archiveId/download', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const asset = await getBackupArchiveDownloadPath(String(req.params.archiveId));
+  if (!asset) {
+    res.status(404).json({ success: false, message: 'El respaldo no está disponible.' });
+    return;
+  }
+
+  res.download(asset.filePath, asset.fileName);
+});
+
+router.post('/settings/backups/archives/:archiveId/restore', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  try {
+    const schema = z.object({ confirm: z.literal(true) });
+    schema.parse(req.body);
+    const job = await startRestoreJob(String(req.params.archiveId), req.authUser.id);
+    res.status(202).json({
+      success: true,
+      data: {
+        jobId: job.id,
+        operation: job.operation,
+        mode: job.mode,
+        status: job.status,
+        progress: job.progress,
+        message: job.message,
+        archiveId: job.archiveId ?? null,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible iniciar la restauración.',
+    });
+  }
+});
+
 router.post('/settings/backups', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
   try {
     const payload = backupModeSchema.parse(req.body);
@@ -216,10 +321,12 @@ router.post('/settings/backups', requireAuth, requirePermissions(['SETTINGS_MANA
       success: true,
       data: {
         jobId: job.id,
+        operation: job.operation,
         mode: job.mode,
         status: job.status,
         progress: job.progress,
         message: job.message,
+        archiveId: job.archiveId ?? null,
       },
     });
   } catch (error) {
@@ -230,8 +337,20 @@ router.post('/settings/backups', requireAuth, requirePermissions(['SETTINGS_MANA
   }
 });
 
-router.get('/settings/backups/:jobId', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
-  const job = getBackupJob(String(req.params.jobId), req.authUser.id);
+router.get('/settings/backups/:jobId', requireAuthJwt, async (req: ApiRequest, res) => {
+  const jobId = String(req.params.jobId);
+  if (jobId === 'history' || jobId === 'import' || jobId === 'archives') {
+    res.status(404).json({ success: false, message: 'Ruta no encontrada.' });
+    return;
+  }
+
+  const requesterId = req.authJwt?.sub;
+  if (!requesterId) {
+    res.status(401).json({ success: false, message: 'Token no valido.' });
+    return;
+  }
+
+  const job = getBackupJob(jobId, requesterId);
   if (!job) {
     res.status(404).json({ success: false, message: 'Respaldo no encontrado.' });
     return;
@@ -241,6 +360,7 @@ router.get('/settings/backups/:jobId', requireAuth, requirePermissions(['SETTING
     success: true,
     data: {
       jobId: job.id,
+      operation: job.operation,
       mode: job.mode,
       status: job.status,
       progress: job.progress,
@@ -249,7 +369,9 @@ router.get('/settings/backups/:jobId', requireAuth, requirePermissions(['SETTING
       error: job.error ?? null,
       databaseExportMethod: job.databaseExportMethod ?? null,
       databaseExportNote: job.databaseExportNote ?? null,
+      archiveId: job.archiveId ?? null,
       completedAt: job.completedAt ?? null,
+      loginHints: job.loginHints ?? null,
     },
   });
 });

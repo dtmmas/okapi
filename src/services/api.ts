@@ -50,6 +50,19 @@ async function apiRequest<T>(url: string, options?: RequestInit): Promise<T> {
     const message =
       payload?.message ||
       (rawBody ? `La solicitud falló (${response.status}).` : `La solicitud falló (${response.status}) sin respuesta del servidor.`);
+
+    if (
+      response.status === 401 &&
+      token &&
+      !url.startsWith('/api/auth/login') &&
+      (message.includes('Token') || message.includes('Sesion') || message.includes('Sesión'))
+    ) {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login');
+      }
+    }
+
     throw new Error(message);
   }
 
@@ -99,6 +112,16 @@ export function getPublicBrand() {
   return apiRequest<RestaurantSnapshot['brand']>('/api/v1/public/brand');
 }
 
+export type DemoAccountHint = {
+  role: string;
+  email: string;
+  password: string;
+};
+
+export function getDemoAccounts() {
+  return apiRequest<DemoAccountHint[]>('/api/auth/demo-accounts');
+}
+
 export function getBrandSettings() {
   return apiRequest<RestaurantSnapshot['brand']>('/api/v1/settings/brand');
 }
@@ -112,8 +135,20 @@ export function updateBrandSettings(payload: RestaurantSnapshot['brand']) {
 
 export type BackupMode = 'database' | 'full';
 
+export type BackupArchiveSummary = {
+  id: string;
+  mode: BackupMode;
+  fileName: string;
+  sizeBytes: number;
+  sizeLabel: string;
+  createdAt: string;
+  source: 'system' | 'import';
+  databaseExportMethod?: 'mysqldump' | 'generated-sql';
+};
+
 export type BackupJobSnapshot = {
   jobId: string;
+  operation: 'backup' | 'restore';
   mode: BackupMode;
   status: 'queued' | 'running' | 'completed' | 'failed';
   progress: number;
@@ -122,11 +157,60 @@ export type BackupJobSnapshot = {
   error: string | null;
   databaseExportMethod: 'mysqldump' | 'generated-sql' | null;
   databaseExportNote: string | null;
+  archiveId: string | null;
   completedAt: string | null;
+  loginHints: string[] | null;
 };
 
+export function getSettingsBackupHistory() {
+  return apiRequest<BackupArchiveSummary[]>('/api/v1/settings/backups/history');
+}
+
+export function importSettingsBackup(file: File) {
+  const body = new FormData();
+  body.append('backup', file);
+  return apiRequest<BackupArchiveSummary>('/api/v1/settings/backups/import', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function startSettingsBackupRestore(archiveId: string) {
+  return apiRequest<{
+    jobId: string;
+    operation: BackupJobSnapshot['operation'];
+    mode: BackupMode;
+    status: BackupJobSnapshot['status'];
+    progress: number;
+    message: string;
+    archiveId: string | null;
+  }>(`/api/v1/settings/backups/archives/${archiveId}/restore`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm: true }),
+  });
+}
+
+export async function downloadSettingsBackupArchive(archiveId: string, fileName: string) {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const response = await fetch(`/api/v1/settings/backups/archives/${archiveId}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+
+  if (!response.ok) {
+    throw new Error('No fue posible descargar el respaldo del historial.');
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function startSettingsBackup(mode: BackupMode) {
-  return apiRequest<{ jobId: string; mode: BackupMode; status: BackupJobSnapshot['status']; progress: number; message: string }>(
+  return apiRequest<{ jobId: string; operation: BackupJobSnapshot['operation']; mode: BackupMode; status: BackupJobSnapshot['status']; progress: number; message: string }>(
     '/api/v1/settings/backups',
     {
       method: 'POST',

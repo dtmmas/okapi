@@ -1,26 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, Store, UtensilsCrossed } from 'lucide-react';
 import { AppIcon } from '@/components/AppIcon';
 import { applyBrowserBrand } from '@/lib/browser-brand';
 import { useSessionStore } from '@/store/useSessionStore';
-import { getPublicBrand } from '@/services/api';
+import { getDemoAccounts, getPublicBrand, type DemoAccountHint } from '@/services/api';
 
 export default function LoginPage() {
+  const location = useLocation();
   const { login, loading, error } = useSessionStore();
+  const routeNotice = useMemo(() => {
+    const state = location.state as { notice?: string } | null;
+    return state?.notice?.trim() ?? '';
+  }, [location.state]);
+  const hideDemoAccounts = useMemo(() => /restauraci[oó]n|respaldo/i.test(routeNotice), [routeNotice]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [brandName, setBrandName] = useState('Restaurante');
   const [logoData, setLogoData] = useState<string | null>(null);
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [demoAccounts, setDemoAccounts] = useState<DemoAccountHint[]>([]);
 
   useEffect(() => {
     void getPublicBrand()
       .then((brand) => {
+        setBackendOnline(true);
         setBrandName(brand.name);
         setLogoData(brand.logoData ?? null);
       })
       .catch(() => {
-        return;
+        setBackendOnline(false);
       });
+
+    void getDemoAccounts()
+      .then((accounts) => setDemoAccounts(accounts))
+      .catch(() => setDemoAccounts([]));
   }, []);
 
   useEffect(() => {
@@ -31,7 +45,7 @@ export default function LoginPage() {
     event.preventDefault();
 
     try {
-      await login(email.trim().toLowerCase(), password);
+      await login(email.trim().toLowerCase(), password.trim());
     } catch {
       return;
     }
@@ -80,6 +94,17 @@ export default function LoginPage() {
           <p className="text-xs uppercase tracking-[0.4em] text-slate-500 dark:text-zinc-500">Acceso seguro</p>
           <h2 className="mt-4 font-display text-4xl text-slate-950 dark:text-white">Iniciar sesion</h2>
           <p className="mt-3 text-sm text-slate-600 dark:text-zinc-400">Ingresa el correo y la contraseña de tu cuenta.</p>
+          {backendOnline === false ? (
+            <p className="mt-3 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-100">
+              No hay conexión con el API. En local ejecuta <strong>npm run dev</strong> y abre{' '}
+              <strong>http://localhost:5174</strong> (no el puerto 3002 directo).
+            </p>
+          ) : null}
+          {backendOnline && !logoData ? (
+            <p className="mt-3 text-xs text-slate-500 dark:text-zinc-500">
+              Conectado al servidor. El logo está vacío hasta que lo subas en Configuración (es normal tras un respaldo nuevo).
+            </p>
+          ) : null}
 
           <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
             <label className="block">
@@ -110,6 +135,11 @@ export default function LoginPage() {
               />
             </label>
 
+            {routeNotice ? (
+              <p className="rounded-2xl border border-sky-400/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-900 dark:text-sky-100">
+                {routeNotice}
+              </p>
+            ) : null}
             {error ? <p className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</p> : null}
 
             <button
@@ -121,6 +151,30 @@ export default function LoginPage() {
               <AppIcon icon={ArrowRight} className="h-4 w-4" />
             </button>
           </form>
+
+          {demoAccounts.length && !hideDemoAccounts ? (
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">
+                Cuentas de desarrollo
+              </p>
+              <div className="mt-3 space-y-2">
+                {demoAccounts.map((account) => (
+                  <button
+                    key={account.email}
+                    type="button"
+                    onClick={() => {
+                      setEmail(account.email);
+                      setPassword(account.password);
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm transition hover:bg-slate-100 dark:border-white/10 dark:bg-black/20 dark:hover:bg-white/[0.06]"
+                  >
+                    <span className="font-medium text-slate-900 dark:text-white">{account.role}</span>
+                    <span className="text-xs text-slate-500 dark:text-zinc-400">{account.email}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
         </section>
       </div>

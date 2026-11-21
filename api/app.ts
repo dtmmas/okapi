@@ -52,7 +52,7 @@ app.use((error: Error, _req: Request, res: Response, next: NextFunction) => {
   void next;
   res.status(500).json({
     success: false,
-    error: error.message || 'Server internal error',
+    message: error.message || 'Error interno del servidor.',
   });
 });
 

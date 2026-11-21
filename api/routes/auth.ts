@@ -7,8 +7,8 @@ import { findAuthUserByEmail, getDemoAccounts, getSafeCurrentUser, sanitizeSessi
 const router = Router();
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  password: z.string().trim().min(8),
 });
 
 router.post('/login', async (req, res) => {
@@ -22,24 +22,35 @@ router.post('/login', async (req, res) => {
     });
   }
 
-  const user = await findAuthUserByEmail(parsed.data.email);
+  try {
+    const user = await findAuthUserByEmail(parsed.data.email);
 
-  if (!user || !bcrypt.compareSync(parsed.data.password, user.passwordHash)) {
-    return res.status(401).json({
+    if (!user || !bcrypt.compareSync(parsed.data.password, user.passwordHash)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Correo o contrasena incorrectos.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Sesion iniciada correctamente.',
+      data: {
+        accessToken: signAccessToken(user),
+        user: sanitizeSessionUser(user),
+        demoAccounts: getDemoAccounts(),
+      },
+    });
+  } catch (error) {
+    console.error('login failed', error);
+    return res.status(500).json({
       success: false,
-      message: 'Correo o contrasena incorrectos.',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'No fue posible iniciar sesion. Verifica que la base de datos este disponible.',
     });
   }
-
-  return res.json({
-    success: true,
-    message: 'Sesion iniciada correctamente.',
-    data: {
-      accessToken: signAccessToken(user),
-      user: sanitizeSessionUser(user),
-      demoAccounts: getDemoAccounts(),
-    },
-  });
 });
 
 router.get('/me', requireAuth, async (req: ApiRequest, res) => {
