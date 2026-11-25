@@ -181,7 +181,21 @@ export type RestaurantTable = {
   sortOrder?: number;
   status: 'FREE' | 'OCCUPIED' | 'RESERVED';
   currentOrder?: string;
+  counterHold?: {
+    orderId: number;
+    code: string;
+    customerName: string;
+  };
   reservation?: import('../../shared/table-reservation').TableReservationInfo;
+};
+
+export type UnassignedCounterOrder = {
+  id: number;
+  code: string;
+  branchId: number;
+  customerName: string;
+  total: number;
+  createdAt: string;
 };
 
 export type KitchenOrder = {
@@ -353,6 +367,7 @@ export type CashMovement = {
   orderCode?: string;
   customerName?: string;
   tableCode?: string;
+  orderChannel?: string;
   paymentReference?: string | null;
   orderTotal?: number;
   orderPaidAmount?: number;
@@ -421,6 +436,7 @@ export type RestaurantSnapshot = {
   salesTrend: SalesPoint[];
   topProducts: ProductPerformance[];
   activeOrders: RestaurantOrder[];
+  unassignedCounterOrders: UnassignedCounterOrder[];
   tables: RestaurantTable[];
   tableAreas?: TableArea[];
   kitchenOrders: KitchenOrder[];

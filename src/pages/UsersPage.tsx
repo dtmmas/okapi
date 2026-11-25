@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Panel } from '@/components/Panel';
 import { StatusBadge } from '@/components/StatusBadge';
-import { createUser, getRolesConfiguration, listUsers, suggestUserEmail, updateUser, updateUserPassword } from '@/services/api';
+import { createUser, deleteUser, getRolesConfiguration, listUsers, suggestUserEmail, updateUser, updateUserPassword } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import type { RoleProfileSummary, UserSummary } from '@/types/restaurant';
+
+const PROTECTED_ADMIN_EMAIL = 'admin@restaurante.gt';
 
 const permissionOptions = [
   { code: 'DASHBOARD_VIEW', label: 'Panel' },
@@ -178,6 +180,36 @@ export default function UsersPage() {
     }
   }
 
+  async function handleDelete(user: UserSummary) {
+    if (user.email.trim().toLowerCase() === PROTECTED_ADMIN_EMAIL) {
+      setError('No se puede eliminar la cuenta admin@restaurante.gt.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Eliminar a "${user.name}" (${user.email})?\n\nEsta cuenta ya no podrá entrar. Si tenía caja, compras o inventario, esos movimientos quedan a nombre de admin@restaurante.gt.\n\nEsta acción no se puede deshacer.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      await deleteUser(user.id);
+      if (selectedUser?.id === user.id) {
+        setSelectedUser(null);
+        setEditOpen(false);
+        setPasswordOpen(false);
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No fue posible eliminar el usuario.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handlePassword() {
     if (!selectedUser) {
       return;
@@ -252,6 +284,16 @@ export default function UsersPage() {
                 >
                   Reset clave
                 </button>
+                {user.email.trim().toLowerCase() === PROTECTED_ADMIN_EMAIL ? null : (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void handleDelete(user)}
+                    className="h-10 rounded-2xl border border-rose-300/40 bg-rose-500/10 px-4 text-sm font-semibold text-rose-800 transition hover:bg-rose-500/15 disabled:opacity-50 dark:text-rose-100"
+                  >
+                    Eliminar
+                  </button>
+                )}
               </div>
             </article>
           ))}

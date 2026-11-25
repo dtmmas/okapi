@@ -175,6 +175,13 @@ export function importSettingsBackup(file: File) {
   });
 }
 
+export function deleteSettingsBackupArchive(archiveId: string) {
+  return apiRequest<{ id: string; fileName: string }>(`/api/v1/settings/backups/archives/${archiveId}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirm: true }),
+  });
+}
+
 export function startSettingsBackupRestore(archiveId: string) {
   return apiRequest<{
     jobId: string;
@@ -394,6 +401,38 @@ export function createOrUpdateOrder(payload: {
   });
 }
 
+export function createCounterOrder(payload: {
+  customerName?: string;
+  customerPhone?: string;
+  payments: Array<{
+    method: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
+    amount: number;
+    receivedAmount?: number | null;
+    reference?: string | null;
+    proofImage?: string | null;
+  }>;
+  items: Array<{ productId: number; quantity: number; notes?: string }>;
+}) {
+  return apiRequest<{ id: number; code: string; total: number; customerName: string; change: number }>('/api/v1/orders/counter', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function assignCounterOrderTable(orderId: number, tableId: number) {
+  return apiRequest<{ success: true; tableCode: string; area: string }>(`/api/v1/orders/${orderId}/counter-table`, {
+    method: 'POST',
+    body: JSON.stringify({ tableId }),
+  });
+}
+
+export function releaseCounterTable(tableId: number) {
+  return apiRequest<{ success: true; closedByName: string; closedByRole: string; tableCode: string; area: string }>(
+    `/api/v1/tables/${tableId}/release-counter`,
+    { method: 'POST' },
+  );
+}
+
 export function requestOrderBill(orderId: number) {
   return apiRequest<{ success: true; billRequestedAt: string }>(`/api/v1/orders/${orderId}/request-bill`, {
     method: 'POST',
@@ -596,6 +635,13 @@ export function updateUser(
   return apiRequest<UserSummary>(`/api/v1/users/${userId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  });
+}
+
+export function deleteUser(userId: number) {
+  return apiRequest<{ id: number; email: string }>(`/api/v1/users/${userId}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirm: true }),
   });
 }
 

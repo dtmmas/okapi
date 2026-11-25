@@ -444,7 +444,7 @@ export default function CashierCheckoutPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6">
-      <header className="mx-auto max-w-6xl">
+      <header className="w-full text-left">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Cobro dividido por monto</p>
@@ -471,7 +471,7 @@ export default function CashierCheckoutPage() {
         </div>
       </header>
 
-      <main className="mx-auto mt-6 grid max-w-6xl gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+      <main className="mt-6 grid w-full min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,32rem)]">
         <section className="space-y-6">
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -500,7 +500,7 @@ export default function CashierCheckoutPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate font-semibold text-slate-950 dark:text-white">
+                        <p className="font-semibold leading-snug text-slate-950 dark:text-white">
                           {item.quantity} x {item.product}
                         </p>
                         {item.paid ? (

@@ -13,6 +13,7 @@ import java.net.URI
 class MainActivity : AppCompatActivity() {
   private lateinit var webView: WebView
   private lateinit var printerManager: SunmiPrinterManager
+  private lateinit var customerDisplayManager: CustomerDisplayManager
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -20,6 +21,8 @@ class MainActivity : AppCompatActivity() {
 
     printerManager = SunmiPrinterManager(applicationContext)
     printerManager.start()
+    customerDisplayManager = CustomerDisplayManager(applicationContext)
+    customerDisplayManager.start()
 
     webView = findViewById(R.id.main_webview)
     configureWebView()
@@ -32,6 +35,7 @@ class MainActivity : AppCompatActivity() {
   }
 
   override fun onDestroy() {
+    customerDisplayManager.stop()
     printerManager.stop()
     super.onDestroy()
   }
@@ -59,7 +63,7 @@ class MainActivity : AppCompatActivity() {
     webView.settings.displayZoomControls = false
     webView.settings.userAgentString = webView.settings.userAgentString + " OkapiSunmiShell/1.0"
 
-    webView.addJavascriptInterface(SunmiJsBridge(printerManager), "AndroidSunmiPrinter")
+    webView.addJavascriptInterface(SunmiJsBridge(printerManager, customerDisplayManager), "AndroidSunmiPrinter")
     webView.webChromeClient = WebChromeClient()
     webView.webViewClient = object : WebViewClient() {
       override fun onPageFinished(view: WebView?, url: String?) {
@@ -96,7 +100,15 @@ class MainActivity : AppCompatActivity() {
           printReceipt: (document) => Promise.resolve(parseResult(AndroidSunmiPrinter.printReceipt(JSON.stringify(document)))).then(() => undefined),
         };
 
+        window.SunmiCustomerDisplay = {
+          __native: true,
+          isAvailable: () => Promise.resolve(parseResult(AndroidSunmiPrinter.isCustomerDisplayAvailable())),
+          updateCart: (payload) => Promise.resolve(parseResult(AndroidSunmiPrinter.updateCustomerDisplay(JSON.stringify(payload)))).then(() => undefined),
+          clear: () => Promise.resolve(parseResult(AndroidSunmiPrinter.clearCustomerDisplay())).then(() => undefined),
+        };
+
         window.dispatchEvent(new Event('sunmi-printer-ready'));
+        window.dispatchEvent(new Event('sunmi-customer-display-ready'));
       })();
     """.trimIndent()
 

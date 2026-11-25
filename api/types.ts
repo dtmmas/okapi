@@ -207,7 +207,21 @@ export type RestaurantTable = {
   sortOrder: number;
   status: TableStatus;
   currentOrder?: string;
+  counterHold?: {
+    orderId: number;
+    code: string;
+    customerName: string;
+  };
   reservation?: import('../shared/table-reservation.js').TableReservationInfo;
+};
+
+export type UnassignedCounterOrder = {
+  id: number;
+  code: string;
+  branchId: number;
+  customerName: string;
+  total: number;
+  createdAt: string;
 };
 
 export type OrderItem = {
@@ -393,6 +407,7 @@ export type CashMovement = {
   orderCode?: string;
   customerName?: string;
   tableCode?: string;
+  orderChannel?: string;
   paymentReference?: string | null;
   orderTotal?: number;
   orderPaidAmount?: number;
@@ -454,6 +469,7 @@ export type RestaurantSnapshot = {
   salesTrend: SalesPoint[];
   topProducts: ProductPerformance[];
   activeOrders: Order[];
+  unassignedCounterOrders: UnassignedCounterOrder[];
   tables: RestaurantTable[];
   tableAreas: TableArea[];
   kitchenOrders: KitchenOrder[];

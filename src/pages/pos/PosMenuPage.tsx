@@ -6,6 +6,7 @@ import { ActiveUserLabel } from '@/components/ActiveUserLabel';
 import { AdminPanelBackButton } from '@/components/AdminPanelBackButton';
 import { getCategoryIcon } from '@/lib/menu-category-icon';
 import { printReceipt } from '@/lib/printing/print-service';
+import { buildCustomerDisplayFromCartLines, useSunmiCustomerDisplaySync } from '@/lib/sunmi/customer-display';
 import { receiptItemNote } from '@/lib/printing/receipt-builders';
 import { StatusBadge } from '@/components/StatusBadge';
 import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
@@ -576,6 +577,21 @@ export default function PosMenuPage() {
     }, 0);
   }, [cartLines, menuProductById, modifierOptionByName]);
 
+  const customerDisplayPayload = useMemo(
+    () =>
+      buildCustomerDisplayFromCartLines({
+        brandName: snapshot?.brand?.name ?? 'Restaurante',
+        currencySymbol,
+        lines: cartLines,
+        getProductName: (productId) => menuProductById.get(productId)?.name,
+        getUnitPrice: (productId) => menuProductById.get(productId)?.price ?? 0,
+        getModifierUnitTotal: (line) =>
+          getBillableModifierTotal(line.sauces) + getBillableModifierTotal(line.dressings),
+      }),
+    [snapshot?.brand?.name, currencySymbol, cartLines, menuProductById, modifierOptionByName],
+  );
+  useSunmiCustomerDisplaySync(customerDisplayPayload);
+
   const modalProduct = useMemo(
     () => (modalProductId ? menuProducts.find((item) => item.id === modalProductId) ?? null : null),
     [menuProducts, modalProductId],
@@ -683,7 +699,7 @@ export default function PosMenuPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6 lg:h-screen lg:overflow-hidden lg:px-10 lg:py-8">
-      <header className="mx-auto max-w-7xl">
+      <header className="w-full text-left">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">POS</p>
@@ -734,7 +750,7 @@ export default function PosMenuPage() {
         </div>
       </header>
 
-      <main className="mx-auto mt-6 grid max-w-7xl gap-6 sm:mt-8 lg:mt-6 lg:h-[calc(100vh-11.5rem)] lg:grid-cols-[1.15fr_0.85fr] lg:overflow-hidden 2xl:grid-cols-[1.3fr_0.7fr]">
+      <main className="mt-4 grid w-full min-w-0 gap-4 lg:h-[calc(100vh-8.5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(28rem,36rem)] lg:overflow-hidden">
         <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden lg:p-6">
           <div className="shrink-0">
             <div className="flex flex-wrap gap-2">
@@ -778,7 +794,7 @@ export default function PosMenuPage() {
           </div>
 
           <div className="mt-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))]">
               {(subcategories.length ? subcategories : activeGroup ? [activeGroup] : []).map((category) => (
                 <button
                   key={category.id}
@@ -813,7 +829,7 @@ export default function PosMenuPage() {
           </div>
         </section>
 
-        <aside className="flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-hidden">
+        <aside className="flex min-h-0 flex-col gap-4 lg:h-full lg:overflow-y-auto lg:pr-1">
           <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:shrink-0 lg:p-6">
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Cuenta</p>
             <div className="mt-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-white/8 dark:bg-black/20 dark:text-zinc-200 sm:text-base lg:text-lg">
@@ -885,7 +901,7 @@ export default function PosMenuPage() {
                     className="flex items-start justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-2 dark:bg-white/[0.03]"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-slate-950 dark:text-white">{item.product}</p>
+                      <p className="leading-snug text-slate-950 dark:text-white">{item.product}</p>
                       {item.notes ? <p className="mt-1 whitespace-pre-wrap text-xs text-slate-500 dark:text-zinc-500">{item.notes}</p> : null}
                     </div>
                     <span className="shrink-0">x{item.quantity}</span>
@@ -897,7 +913,7 @@ export default function PosMenuPage() {
             )}
           </section>
 
-          <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:p-6">
+          <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5">
             <div className="flex items-center justify-between gap-4">
               <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nuevo pedido</p>
               <button
@@ -909,7 +925,7 @@ export default function PosMenuPage() {
               </button>
             </div>
 
-            <div className="mt-4 space-y-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
+            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
               {cartLines.length ? (
                 cartLines.map((line) => {
                   const product = menuProductById.get(line.productId);
@@ -931,17 +947,15 @@ export default function PosMenuPage() {
                   return (
                     <div
                       key={line.id}
-                      className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:bg-white/[0.03] dark:text-zinc-200 sm:text-base lg:text-lg"
+                      className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:bg-white/[0.03] dark:text-zinc-200"
                     >
-                      <div className="min-w-0">
-                        <p className="truncate text-slate-950 dark:text-white">{product.name}</p>
-                        <p className="text-xs text-slate-500 dark:text-zinc-500">
-                          {stationLabel(product.station)}
-                          {details ? ` • ${details}` : ''}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="min-w-[76px] text-right text-xs font-semibold text-slate-600 dark:text-zinc-300">
+                      <p className="font-semibold leading-snug text-slate-950 dark:text-white">{product.name}</p>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-500">
+                        {stationLabel(product.station)}
+                        {details ? ` • ${details}` : ''}
+                      </p>
+                      <div className="mt-2 flex items-center justify-end gap-2">
+                        <div className="mr-auto min-w-[76px] text-left text-xs font-semibold text-slate-600 dark:text-zinc-300">
                           {formatMoney(lineTotal)}
                         </div>
                         <button
@@ -1007,7 +1021,7 @@ export default function PosMenuPage() {
           </section>
 
           {activeOrder && destinationTables.length ? (
-            <section className="mt-auto shrink-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-5 lg:p-6">
+            <section className="shrink-0 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none">
               <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Mover cuenta</p>
               <div className="mt-3 space-y-2">
                 <select
@@ -1074,8 +1088,8 @@ export default function PosMenuPage() {
               </div>
             ) : null}
 
-            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                 {pickerProducts.length ? (
                   pickerProducts.map((product) => {
                     const productCategory = product.categoryId ? categoryById.get(product.categoryId) ?? null : null;
@@ -1085,32 +1099,34 @@ export default function PosMenuPage() {
                         key={product.id}
                         type="button"
                         onClick={() => openProductModal(product.id)}
-                        className="rounded-[24px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:shadow-none dark:hover:bg-zinc-950/55 sm:p-5"
+                        className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-2.5 text-left shadow-sm transition hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:shadow-none dark:hover:bg-zinc-950/55"
                       >
                         {product.imageUrl ? (
                           <img
                             src={product.imageUrl}
                             alt={product.name}
-                            className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 object-cover dark:border-white/10"
+                            className="h-[4.5rem] w-[5.25rem] shrink-0 rounded-xl border border-slate-200 object-cover dark:border-white/10"
                             loading="lazy"
                           />
                         ) : (
-                          <div className="mb-4 flex aspect-[4/3] w-full items-center justify-center rounded-[18px] border border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-500">
-                            <AppIcon icon={getCategoryIcon(productCategory ?? pickerCategory)} className="h-7 w-7" />
+                          <div className="flex h-[4.5rem] w-[5.25rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-500">
+                            <AppIcon icon={getCategoryIcon(productCategory ?? pickerCategory)} className="h-6 w-6" />
                           </div>
                         )}
-                        <p className="font-semibold text-slate-950 dark:text-white sm:text-lg">{product.name}</p>
-                        <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
-                          {currencySymbol} {product.price.toFixed(2)}
-                        </p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">
-                          {(productCategory?.name ?? pickerCategory.name)} • {stationLabel(product.station)}
-                        </p>
+                        <span className="min-w-0">
+                          <p className="line-clamp-2 text-base font-semibold leading-snug text-slate-950 dark:text-white">{product.name}</p>
+                          <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">
+                            {currencySymbol} {product.price.toFixed(2)}
+                          </p>
+                          <p className="mt-0.5 truncate text-[11px] uppercase tracking-[0.16em] text-slate-500 dark:text-zinc-500">
+                            {(productCategory?.name ?? pickerCategory.name)} • {stationLabel(product.station)}
+                          </p>
+                        </span>
                       </button>
                     );
                   })
                 ) : (
-                  <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2 xl:col-span-3">
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2 xl:col-span-3">
                     No hay platillos activos en esta categoria todavia.
                   </div>
                 )}
@@ -1122,117 +1138,112 @@ export default function PosMenuPage() {
 
       {productModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4 py-6 dark:bg-black/60">
-          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white p-4 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:max-h-[calc(100vh-3rem)] sm:p-5 lg:max-h-[calc(100vh-4rem)] lg:p-6">
-            <div className="flex items-start justify-between gap-4">
+          <div className="flex max-h-[calc(100vh-4rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none">
+            <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Detalle del item</p>
-                <h2 className="mt-2 truncate font-display text-2xl text-slate-950 dark:text-white sm:text-3xl">{modalProduct?.name ?? 'Producto'}</h2>
-                <p className="mt-2 text-sm text-slate-600 dark:text-zinc-400">
-                  {editingLineId ? 'Modifica el detalle para confirmar otra vez cómo lo quiere el cliente.' : 'Captura cómo lo quiere el cliente antes de agregarlo al pedido.'}
-                </p>
+                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500 dark:text-zinc-500">Detalle del item</p>
+                <h2 className="mt-0.5 truncate font-display text-xl leading-tight text-slate-950 dark:text-white">{modalProduct?.name ?? 'Producto'}</h2>
               </div>
               <button
                 type="button"
                 onClick={closeProductModal}
-                className="h-10 w-10 rounded-2xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:bg-white/[0.06]"
+                className="h-8 w-8 shrink-0 rounded-lg border border-slate-200 bg-white text-sm text-slate-900 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:bg-white/[0.06]"
               >
                 ×
               </button>
             </div>
 
-            <div className="mt-4 flex-1 overflow-y-auto pr-1">
+            <div className="mt-2 flex-1 overflow-y-auto pr-1">
               {modalProduct?.imageUrl ? (
                 <img
                   src={modalProduct.imageUrl}
                   alt={modalProduct.name}
-                  className="aspect-[16/9] max-h-[26vh] w-full rounded-[22px] border border-slate-200 object-cover dark:border-white/10 sm:aspect-[4/3] sm:max-h-[30vh]"
+                  className="aspect-[5/2] w-full rounded-xl border border-slate-200 object-cover dark:border-white/10"
                   loading="lazy"
                 />
               ) : null}
 
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {modalProductAllowsModifiers ? (
                   <>
-                    <div className="space-y-3">
-                      <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Salsa</label>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Salsa</label>
                       <button
                         type="button"
                         onClick={() => openModifierDialog('SAUCES')}
-                        className="flex min-h-12 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base"
+                        className="flex min-h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06]"
                       >
                         <span className="truncate">{modalSauces.length ? `${modalSauces.length} salsa(s) seleccionadas` : 'Seleccionar salsas'}</span>
-                        <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
+                        <span className="text-[10px] uppercase tracking-[0.16em] text-slate-500 dark:text-zinc-500">Ver</span>
                       </button>
                       {modalSauces.length ? (
-                        <p className="text-xs text-slate-500 dark:text-zinc-500">{modalSauces.join(', ')}</p>
+                        <p className="truncate text-[11px] text-slate-500 dark:text-zinc-500">{modalSauces.join(', ')}</p>
                       ) : null}
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setModalSauces([])}
-                          disabled={!modalSauces.length}
-                          className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
-                        >
-                          <AppIcon icon={X} className="h-3.5 w-3.5" />
-                          Quitar salsas
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setModalSauces([])}
+                        disabled={!modalSauces.length}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+                      >
+                        <AppIcon icon={X} className="h-3 w-3" />
+                        Quitar salsas
+                      </button>
                     </div>
 
-                    <div className="space-y-3">
-                      <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Aderezo</label>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Aderezo</label>
                       <button
                         type="button"
                         onClick={() => openModifierDialog('DRESSINGS')}
-                        className="flex min-h-12 w-full items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06] sm:text-base"
+                        className="flex min-h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-left text-sm text-slate-900 transition hover:bg-slate-50 dark:border-white/10 dark:bg-black/30 dark:text-white dark:hover:bg-white/[0.06]"
                       >
                         <span className="truncate">{modalDressings.length ? `${modalDressings.length} aderezo(s) seleccionados` : 'Seleccionar aderezos'}</span>
-                        <span className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Ver</span>
+                        <span className="text-[10px] uppercase tracking-[0.16em] text-slate-500 dark:text-zinc-500">Ver</span>
                       </button>
                       {modalDressings.length ? (
-                        <p className="text-xs text-slate-500 dark:text-zinc-500">{modalDressings.join(', ')}</p>
+                        <p className="truncate text-[11px] text-slate-500 dark:text-zinc-500">{modalDressings.join(', ')}</p>
                       ) : null}
                       <button
                         type="button"
                         onClick={() => setModalDressings([])}
                         disabled={!modalDressings.length}
-                        className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
                       >
-                        <AppIcon icon={X} className="h-3.5 w-3.5" />
+                        <AppIcon icon={X} className="h-3 w-3" />
                         Quitar aderezos
                       </button>
                     </div>
                   </>
                 ) : (
-                  <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2">
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2">
                     Este producto no aplica para salsas o aderezos.
                   </div>
                 )}
 
                 <div className="sm:col-span-2">
-                  <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Observaciones</label>
+                  <label className="text-[10px] uppercase tracking-[0.22em] text-slate-500 dark:text-zinc-500">Observaciones</label>
                   <textarea
                     value={modalNotes}
                     onChange={(event) => setModalNotes(event.target.value)}
-                    rows={4}
-                    className="mt-3 min-h-28 w-full resize-y rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white sm:text-base"
+                    rows={2}
+                    className="mt-1 w-full resize-y rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 grid shrink-0 gap-3 border-t border-slate-200 pt-4 dark:border-white/10 sm:grid-cols-2">
+            <div className="mt-2 grid shrink-0 gap-2 border-t border-slate-200 pt-2 dark:border-white/10 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={closeProductModal}
-                className="h-12 rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-14 sm:text-base"
+                className="h-9 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={confirmAddProduct}
-                className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base"
+                className="h-9 rounded-xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white"
               >
                 {editingLineId ? 'Guardar cambios' : 'Agregar'}
               </button>
@@ -1243,31 +1254,31 @@ export default function PosMenuPage() {
 
       {productModalOpen && modifierDialogSection ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm dark:bg-black/70">
-          <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white p-5 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none sm:p-6 lg:p-8">
-            <div className="flex items-start justify-between gap-4">
+          <div className="flex max-h-[calc(100vh-4rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-white/10 dark:bg-[#0b0b10] dark:text-white dark:shadow-none">
+            <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Complementos</p>
-                <h2 className="mt-2 truncate font-display text-2xl text-slate-950 dark:text-white sm:text-3xl">
+                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500 dark:text-zinc-500">Complementos</p>
+                <h2 className="mt-0.5 truncate font-display text-xl leading-tight text-slate-950 dark:text-white">
                   {modifierDialogSection === 'SAUCES' ? 'Seleccionar salsa' : 'Seleccionar aderezo'}
                 </h2>
               </div>
               <button
                 type="button"
                 onClick={closeModifierDialog}
-                className="h-10 w-10 rounded-2xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:bg-white/[0.06]"
+                className="h-8 w-8 shrink-0 rounded-lg border border-slate-200 bg-white text-sm text-slate-900 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-white dark:hover:bg-white/[0.06]"
               >
                 ×
               </button>
             </div>
 
-            <div className="mt-6 grid max-h-[60vh] gap-3 overflow-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-2 grid min-h-0 flex-1 gap-2.5 overflow-auto pr-1 sm:grid-cols-2">
               {activeModifierOptions.length ? (
                 activeModifierOptions.map((option) => (
                   <button
                     key={`${option.section}-${option.id}`}
                     type="button"
                     onClick={() => toggleModifier(option.label)}
-                    className={`rounded-[24px] border p-4 text-left shadow-sm transition dark:shadow-none ${
+                    className={`flex items-center gap-3 rounded-2xl border p-2.5 text-left shadow-sm transition dark:shadow-none ${
                       modifierDraftSelection.includes(option.label)
                         ? 'border-emerald-300/40 bg-emerald-500/10 hover:bg-emerald-500/15 dark:border-emerald-300/30 dark:bg-emerald-500/10'
                         : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-white/10 dark:bg-zinc-950/40 dark:hover:bg-zinc-950/55'
@@ -1277,50 +1288,48 @@ export default function PosMenuPage() {
                       <img
                         src={option.imageUrl}
                         alt={option.label}
-                        className="mb-4 aspect-[4/3] w-full rounded-[18px] border border-slate-200 object-cover dark:border-white/10"
+                        className="h-[4.5rem] w-[5.25rem] shrink-0 rounded-xl border border-slate-200 object-cover dark:border-white/10"
                         loading="lazy"
                       />
                     ) : (
-                      <div className="mb-4 flex aspect-[4/3] w-full items-center justify-center rounded-[18px] border border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-500">
-                        <AppIcon icon={modifierDialogSection === 'SAUCES' ? ChefHat : Salad} className="h-7 w-7" />
+                      <div className="flex h-[4.5rem] w-[5.25rem] shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-400 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-500">
+                        <AppIcon icon={modifierDialogSection === 'SAUCES' ? ChefHat : Salad} className="h-6 w-6" />
                       </div>
                     )}
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-950 dark:text-white">{option.label}</p>
-                        {option.price > 0 ? (
-                          <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-200">Cobro adicional: {formatMoney(option.price)}</p>
-                        ) : (
-                          <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">Sin costo adicional</p>
-                        )}
-                      </div>
-                      {modifierDraftSelection.includes(option.label) ? (
-                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200">
-                          <AppIcon icon={Check} className="h-4 w-4" />
-                        </span>
-                      ) : null}
-                    </div>
+                    <span className="min-w-0 flex-1">
+                      <p className="line-clamp-2 text-base font-semibold leading-snug text-slate-950 dark:text-white">{option.label}</p>
+                      {option.price > 0 ? (
+                        <p className="mt-1 text-sm text-emerald-700 dark:text-emerald-200">Cobro adicional: {formatMoney(option.price)}</p>
+                      ) : (
+                        <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">Sin costo adicional</p>
+                      )}
+                    </span>
+                    {modifierDraftSelection.includes(option.label) ? (
+                      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-emerald-300/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200">
+                        <AppIcon icon={Check} className="h-4 w-4" />
+                      </span>
+                    ) : null}
                   </button>
                 ))
               ) : (
-                <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2 xl:col-span-3">
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 sm:col-span-2">
                   No hay {modifierDialogSection === 'SAUCES' ? 'salsas' : 'aderezos'} creados todavía en el catálogo.
                 </div>
               )}
             </div>
 
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <div className="mt-2 grid gap-2 border-t border-slate-200 pt-2 dark:border-white/10 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={closeModifierDialog}
-                className="h-12 rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06] sm:h-14 sm:text-base"
+                className="h-9 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-100 dark:hover:bg-white/[0.06]"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={applyModifierSelection}
-                className="h-12 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base"
+                className="h-9 rounded-xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white"
               >
                 Aplicar selección
               </button>

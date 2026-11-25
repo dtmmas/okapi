@@ -4,6 +4,7 @@ import { printReceipt, receiptFormatter } from '@/lib/printing/print-service';
 import { buildReceiptHtml } from '@/lib/printing/receipt-builders';
 import { hasSunmiPrinterBridge } from '@/lib/printing/sunmi-print-provider';
 import {
+  deleteSettingsBackupArchive,
   downloadSettingsBackup,
   downloadSettingsBackupArchive,
   getBrandSettings,
@@ -51,6 +52,7 @@ export default function SettingsPage() {
   const [backupExportNote, setBackupExportNote] = useState<string | null>(null);
   const [backupJobOperation, setBackupJobOperation] = useState<'backup' | 'restore' | null>(null);
   const [backupHistory, setBackupHistory] = useState<BackupArchiveSummary[]>([]);
+  const [deletingArchiveId, setDeletingArchiveId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [importingBackup, setImportingBackup] = useState(false);
   const formatPreview = useMemo(() => receiptFormatter(logoData), [width, logoData]);
@@ -276,6 +278,33 @@ export default function SettingsPage() {
       setBackupJobOperation(null);
       setBackupMode(null);
       setBackupError(err instanceof Error ? err.message : 'No fue posible iniciar la restauración.');
+    }
+  }
+
+  async function handleDeleteArchive(archive: BackupArchiveSummary) {
+    if (backupRunning || deletingArchiveId) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Eliminar el respaldo "${archive.fileName}"?\n\nSe borrará solo la copia guardada en el servidor. La base de datos y el menú que estás usando no cambian.\n\nEsta acción no se puede deshacer.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingArchiveId(archive.id);
+    setBackupError(null);
+    setBackupSuccess(null);
+
+    try {
+      await deleteSettingsBackupArchive(archive.id);
+      setBackupHistory((current) => current.filter((item) => item.id !== archive.id));
+      setBackupSuccess(`Respaldo "${archive.fileName}" eliminado del historial.`);
+    } catch (err) {
+      setBackupError(err instanceof Error ? err.message : 'No fue posible eliminar el respaldo.');
+    } finally {
+      setDeletingArchiveId(null);
     }
   }
 
@@ -509,7 +538,7 @@ export default function SettingsPage() {
         )}
       </Panel>
 
-      <Panel title="Respaldos" subtitle="Crear, historial, descargar, importar y restaurar">
+      <Panel title="Respaldos" subtitle="Crear, historial, descargar, importar, restaurar y eliminar">
         <p className="text-sm text-slate-600 dark:text-zinc-400">
           Cada respaldo exitoso queda guardado en el servidor (historial). Solo puede ejecutarse una tarea a la vez.
         </p>
@@ -630,11 +659,19 @@ export default function SettingsPage() {
                       </button>
                       <button
                         type="button"
-                        disabled={backupRunning}
+                        disabled={backupRunning || deletingArchiveId === item.id}
                         onClick={() => void handleRestoreArchive(item)}
                         className="rounded-xl border border-amber-300/40 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-900 dark:text-amber-100"
                       >
                         Restaurar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={backupRunning || deletingArchiveId !== null}
+                        onClick={() => void handleDeleteArchive(item)}
+                        className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-800 dark:text-rose-100"
+                      >
+                        {deletingArchiveId === item.id ? 'Eliminando...' : 'Eliminar'}
                       </button>
                     </div>
                   </div>

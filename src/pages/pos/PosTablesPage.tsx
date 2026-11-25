@@ -11,6 +11,7 @@ import { TableStatusControl } from '@/components/TableReservationDetails';
 import { useTableRefresh } from '@/hooks/useTableRefresh';
 import { getAreaIcon } from '@/lib/area-icons';
 import { getSortedAreas, normalizeAreaName, sortTablesInArea } from '@/lib/tables';
+import { releaseCounterTable } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import { usePosWizardStore } from '@/store/usePosWizardStore';
 
@@ -88,9 +89,20 @@ export default function PosTablesPage() {
     navigate('/pos/cliente');
   }
 
+  async function releaseCounterSeat(tableId: number, tableCode: string) {
+    if (!window.confirm(`¿El cliente de la mesa ${tableCode} se retiró? La mesa se cierra y queda registrado a tu nombre.`)) return;
+    try {
+      const result = await releaseCounterTable(tableId);
+      await refreshSnapshot();
+      setSelectionError(`Mesa ${result.tableCode} cerrada por ${result.closedByName}.`);
+    } catch (err) {
+      setSelectionError(err instanceof Error ? err.message : 'No fue posible cerrar la mesa.');
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6 lg:px-10 lg:py-8">
-      <header className="mx-auto max-w-7xl">
+      <header className="w-full text-left">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">POS</p>
@@ -112,7 +124,7 @@ export default function PosTablesPage() {
         </div>
       </header>
 
-      <main className="mx-auto mt-6 max-w-7xl sm:mt-8 lg:mt-10">
+      <main className="mt-6 w-full min-w-0">
         {areaTabs.length ? (
           <div className="mb-5 flex flex-wrap gap-2">
             {areaTabs.map((area) => {
@@ -154,7 +166,7 @@ export default function PosTablesPage() {
         ) : null}
 
         {visibleTables.length ? (
-          <div className="isolate grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+          <div className="isolate grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]">
           {visibleTables.map((table) => {
             const order = activeOrders.find((item) => item.tableCode === table.code);
             const isReadyToCharge = Boolean(order?.readyForPayment);
@@ -188,8 +200,17 @@ export default function PosTablesPage() {
                     </div>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-center text-[10px] font-semibold text-slate-950 dark:border-white/8 dark:bg-black/20 dark:text-white sm:text-[11px]">
-                    {order?.code ?? 'Sin orden'}
+                    {order?.code ?? (table.counterHold ? `Caja pagada · ${table.counterHold.code}` : 'Sin orden')}
                   </div>
+                  {table.counterHold && !order ? (
+                    <button
+                      type="button"
+                      onClick={() => void releaseCounterSeat(table.id, table.code)}
+                      className="pointer-events-auto relative z-20 h-9 w-full rounded-xl border border-rose-300 text-[11px] font-semibold text-rose-800"
+                    >
+                      Cliente se retiró
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );

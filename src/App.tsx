@@ -14,6 +14,7 @@ import PosMenuPage from '@/pages/pos/PosMenuPage';
 import KioskPage from '@/pages/kiosk/KioskPage';
 import CashierTablesPage from '@/pages/cashier/CashierTablesPage';
 import CashierCheckoutPage from '@/pages/cashier/CashierCheckoutPage';
+import CashierCounterPage from '@/pages/cashier/CashierCounterPage';
 import TablesPage from '@/pages/TablesPage';
 import ComandasPage from '@/pages/ComandasPage';
 import CashPage from '@/pages/CashPage';
@@ -180,10 +181,12 @@ function FullscreenLayout() {
         ? 'POS Cliente'
         : location.pathname.startsWith('/pos/mesas')
           ? 'POS Mesas'
-          : location.pathname.startsWith('/cashier/cobrar')
-            ? 'Cobro'
-            : location.pathname.startsWith('/cashier')
-              ? 'Caja'
+          : location.pathname.startsWith('/cashier/mostrador')
+            ? 'Mostrador'
+            : location.pathname.startsWith('/cashier/cobrar')
+              ? 'Cobro'
+              : location.pathname.startsWith('/cashier')
+                ? 'Caja'
               : 'Operacion';
 
   useEffect(() => {
@@ -417,6 +420,7 @@ export default function App() {
           <Route path="/pos/menu" element={<PosMenuPage />} />
           <Route path="/kiosk" element={<KioskPage />} />
           <Route path="/cashier/mesas" element={<CashierTablesPage />} />
+          <Route path="/cashier/mostrador" element={<CashierCounterPage />} />
           <Route path="/cashier/cobrar/:tableId" element={<CashierCheckoutPage />} />
           <Route path="/kds" element={<KdsRoute />} />
         </Route>

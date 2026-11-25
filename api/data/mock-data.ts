@@ -623,6 +623,7 @@ export const restaurantSnapshot: RestaurantSnapshot = {
   salesTrend,
   topProducts,
   activeOrders,
+  unassignedCounterOrders: [],
   tables,
   tableAreas,
   kitchenOrders,

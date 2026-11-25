@@ -8,6 +8,7 @@ import { TableCapacity } from '@/components/TableCapacity';
 import { TableCardMark } from '@/components/TableCardMark';
 import { getAreaIcon } from '@/lib/area-icons';
 import { getSortedAreas, normalizeAreaName, sortTablesInArea } from '@/lib/tables';
+import { releaseCounterTable } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 
 export default function CashierTablesPage() {
@@ -23,6 +24,8 @@ export default function CashierTablesPage() {
   const cashShiftOpen = Boolean(snapshot?.cashShift?.isOpen);
   const currencySymbol = snapshot?.brand.currencySymbol ?? 'Q';
   const [activeArea, setActiveArea] = useState<string>('');
+  const [notice, setNotice] = useState<string | null>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSnapshot();
@@ -87,6 +90,26 @@ export default function CashierTablesPage() {
     return counts;
   }, [occupiedTables]);
   const readyToChargeCount = useMemo(() => activeOrders.filter((order) => order.readyForPayment).length, [activeOrders]);
+  const counterTables = useMemo(
+    () => tables.filter((table) => table.counterHold && (!user?.branchId || table.branchId === user.branchId) && !orderByTableCode.get(table.code)),
+    [orderByTableCode, tables, user?.branchId],
+  );
+  const unassignedCounterOrders = useMemo(
+    () => (snapshot?.unassignedCounterOrders ?? []).filter((order) => !user?.branchId || order.branchId === user.branchId),
+    [snapshot?.unassignedCounterOrders, user?.branchId],
+  );
+
+  async function releaseTable(tableId: number, tableCode: string) {
+    if (!window.confirm(`¿El cliente de la mesa ${tableCode} se retiró? La mesa se cierra y queda registrado a tu nombre.`)) return;
+    setReleaseError(null);
+    try {
+      const result = await releaseCounterTable(tableId);
+      await refreshSnapshot();
+      setNotice(`Mesa ${result.tableCode} cerrada por ${result.closedByName}.`);
+    } catch (err) {
+      setReleaseError(err instanceof Error ? err.message : 'No fue posible cerrar la mesa.');
+    }
+  }
 
   if (!user || !snapshot) {
     return null;
@@ -98,7 +121,7 @@ export default function CashierTablesPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6">
-      <header className="mx-auto max-w-7xl">
+      <header className="w-full text-left">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Caja</p>
@@ -110,6 +133,13 @@ export default function CashierTablesPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/cashier/mostrador')}
+              className="inline-flex h-11 items-center gap-2 rounded-2xl border border-amber-300/40 bg-amber-300 px-4 text-sm font-semibold text-zinc-950 sm:h-12 lg:h-14 lg:px-5"
+            >
+              Nuevo pedido
+            </button>
             <button
               type="button"
               onClick={() => void refreshSnapshot()}
@@ -137,7 +167,39 @@ export default function CashierTablesPage() {
         </div>
       </header>
 
-      <main className="mx-auto mt-6 max-w-7xl">
+      <main className="mt-6 w-full min-w-0">
+        {notice ? <p className="mb-4 rounded-2xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{notice}</p> : null}
+        {releaseError ? <p className="mb-4 rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">{releaseError}</p> : null}
+        {unassignedCounterOrders.length ? (
+          <section className="mb-6 rounded-[28px] border border-amber-300/40 bg-white p-5 dark:border-amber-300/20 dark:bg-white/[0.03]">
+            <h2 className="text-lg font-semibold">Pedidos de mostrador sin mesa</h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">Ya están cobrados y la comanda salió. Asigna la mesa cuando el cliente se siente.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {unassignedCounterOrders.map((order) => (
+                <button key={order.id} type="button" onClick={() => navigate('/cashier/mostrador', { state: { assignOrderId: order.id } })} className="rounded-2xl border px-4 py-2 text-left text-sm">
+                  <span className="font-semibold">{order.code}</span>
+                  <span className="ml-2 text-slate-500">{order.customerName}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {counterTables.length ? (
+          <section className="mb-6">
+            <h2 className="text-lg font-semibold">Clientes de mostrador en mesa</h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-zinc-400">El consumo de caja ya está pagado. Ciérrala cuando el cliente se retire.</p>
+            <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
+              {counterTables.map((table) => (
+                <div key={table.id} className="rounded-[24px] border bg-white p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{table.area}</p>
+                  <p className="mt-1 text-2xl font-semibold">{table.code}</p>
+                  <p className="mt-1 text-sm">Caja pagada · {table.counterHold?.code} · {table.counterHold?.customerName}</p>
+                  <button type="button" onClick={() => void releaseTable(table.id, table.code)} className="mt-3 h-10 rounded-2xl border border-rose-300 px-3 text-sm font-semibold text-rose-800">Cliente se retiró</button>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
         {!hasAccountsToCharge ? (
           <div className="mb-4 rounded-[28px] border border-slate-200 bg-white px-6 py-5 text-sm text-slate-600 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-300 dark:shadow-none">
             No hay cuentas por cobrar. Cuando un mesero envíe un pedido a una mesa, aquí aparecerá como ocupada.
@@ -177,7 +239,7 @@ export default function CashierTablesPage() {
           </div>
         ) : null}
 
-        <div className="isolate grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className="isolate grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(18rem,1fr))]">
           {visibleTables.map((table) => {
             const order = table.code ? orderByTableCode.get(table.code) ?? null : null;
             const isReadyToCharge = Boolean(order?.readyForPayment);

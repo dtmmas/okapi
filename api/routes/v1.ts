@@ -20,6 +20,9 @@ import {
   createWasteRecordForUser,
   createProductForUser,
   createOrderForUser,
+  createCounterOrderForUser,
+  assignCounterOrderTableForUser,
+  releaseCounterTableForUser,
   createTableForUser,
   deleteCategoryForUser,
   deleteBranchForUser,
@@ -71,6 +74,7 @@ import {
   updateBranchForUser,
   updateRoleProfileForUser,
   updateUser,
+  deleteUser,
   updateUserPassword,
   saveProductRecipeForUser,
   saveSubRecipeFormulaForUser,
@@ -78,6 +82,7 @@ import {
   requestOrderBillForUser,
 } from '../services/restaurant-service.js';
 import {
+  deleteBackupArchive,
   getBackupArchiveDownloadPath,
   getBackupDownloadPath,
   getBackupJob,
@@ -288,6 +293,20 @@ router.get('/settings/backups/archives/:archiveId/download', requireAuth, requir
   res.download(asset.filePath, asset.fileName);
 });
 
+router.delete('/settings/backups/archives/:archiveId', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  try {
+    const schema = z.object({ confirm: z.literal(true) });
+    schema.parse(req.body ?? {});
+    const removed = await deleteBackupArchive(String(req.params.archiveId));
+    res.json({ success: true, data: removed, message: 'Respaldo eliminado del historial.' });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible eliminar el respaldo.',
+    });
+  }
+});
+
 router.post('/settings/backups/archives/:archiveId/restore', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
   try {
     const schema = z.object({ confirm: z.literal(true) });
@@ -493,6 +512,92 @@ router.post('/orders/:orderId/pay', requireAuth, requirePermissions(['CASH_MANAG
     return res.json({ success: true, data: result });
   } catch (error) {
     return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible cobrar.' });
+  }
+});
+
+router.post('/orders/counter', requireAuth, requirePermissions(['CASH_MANAGE']), async (req: ApiRequest, res) => {
+  try {
+    const paymentSchema = z.object({
+      method: z.enum(['CASH', 'CARD', 'TRANSFER', 'MIXED']),
+      amount: z.number().positive(),
+      receivedAmount: z.number().nonnegative().nullable().optional(),
+      reference: z.string().max(120).nullable().optional(),
+      proofImage: z.string().nullable().optional(),
+    });
+    const body = z.object({
+      customerName: z.string().trim().max(150).optional(),
+      customerPhone: z.string().trim().max(40).optional(),
+      method: z.enum(['CASH', 'CARD', 'TRANSFER', 'MIXED']).optional(),
+      amount: z.number().positive().optional(),
+      receivedAmount: z.number().nonnegative().nullable().optional(),
+      reference: z.string().max(120).nullable().optional(),
+      proofImage: z.string().nullable().optional(),
+      payments: z.array(paymentSchema).min(1).max(30).optional(),
+      items: z.array(z.object({
+        productId: z.number().int().positive(),
+        quantity: z.number().int().positive().max(999),
+        notes: z.string().max(2000).optional(),
+      })).min(1).max(200),
+    }).parse(req.body);
+    const payments = body.payments?.flatMap((payment) => (
+      payment.method && payment.amount
+        ? [{
+            method: payment.method,
+            amount: payment.amount,
+            receivedAmount: payment.receivedAmount ?? null,
+            reference: payment.reference ?? null,
+            proofImage: payment.proofImage ?? null,
+          }]
+        : []
+    ));
+    if ((!payments?.length && (!body.method || body.amount == null)) || !body.items?.length) {
+      return res.status(400).json({ success: false, message: 'Datos inválidos.' });
+    }
+    const created = await createCounterOrderForUser(req.authUser, {
+      customerName: body.customerName,
+      customerPhone: body.customerPhone,
+      method: body.method,
+      amount: body.amount,
+      receivedAmount: body.receivedAmount ?? null,
+      reference: body.reference ?? null,
+      proofImage: body.proofImage ?? null,
+      payments,
+      items: body.items.flatMap((item) => (
+        item.productId && item.quantity
+          ? [{ productId: item.productId, quantity: item.quantity, notes: item.notes }]
+          : []
+      )),
+    });
+    return res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible cobrar el pedido de mostrador.' });
+  }
+});
+
+router.post('/orders/:orderId/counter-table', requireAuth, requirePermissions(['CASH_MANAGE']), async (req: ApiRequest, res) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const tableId = Number(req.body?.tableId);
+    if (!orderId || !tableId) return res.status(400).json({ success: false, message: 'Mesa inválida.' });
+    const result = await assignCounterOrderTableForUser(req.authUser, { orderId, tableId });
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible asignar la mesa.' });
+  }
+});
+
+router.post('/tables/:tableId/release-counter', requireAuth, async (req: ApiRequest, res) => {
+  try {
+    const tableId = Number(req.params.tableId);
+    if (!tableId) return res.status(400).json({ success: false, message: 'Mesa inválida.' });
+    const permissions = req.authUser.permissions;
+    if (!permissions.includes('CASH_MANAGE') && !permissions.includes('POS_USE')) {
+      return res.status(403).json({ success: false, message: 'No tienes permisos para cerrar la mesa.' });
+    }
+    const result = await releaseCounterTableForUser(req.authUser, { tableId });
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error instanceof Error ? error.message : 'No fue posible cerrar la mesa.' });
   }
 });
 
@@ -1767,6 +1872,28 @@ router.patch('/users/:id', requireAuth, requirePermissions(['SETTINGS_MANAGE']),
     return res.status(400).json({
       success: false,
       message: error instanceof Error ? error.message : 'No fue posible actualizar el usuario.',
+    });
+  }
+});
+
+router.delete('/users/:id', requireAuth, requirePermissions(['SETTINGS_MANAGE']), async (req: ApiRequest, res) => {
+  const id = Number(req.params.id);
+  if (!id) {
+    return res.status(400).json({ success: false, message: 'Id inválido.' });
+  }
+
+  const parsed = z.object({ confirm: z.literal(true) }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Confirma la eliminación del usuario.' });
+  }
+
+  try {
+    const removed = await deleteUser(req.authUser, id);
+    return res.json({ success: true, message: 'Usuario eliminado.', data: removed });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'No fue posible eliminar el usuario.',
     });
   }
 });

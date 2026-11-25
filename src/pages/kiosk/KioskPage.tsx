@@ -21,6 +21,7 @@ import { TableCapacity } from '@/components/TableCapacity';
 import { TableCardMark } from '@/components/TableCardMark';
 import { getCategoryIcon } from '@/lib/menu-category-icon';
 import { isMenuSectionVisibleInPos } from '@/lib/menu-sections';
+import { buildCustomerDisplayFromCartLines, useSunmiCustomerDisplaySync } from '@/lib/sunmi/customer-display';
 import { createOrUpdateOrder, loginRequest, releaseTableReservationKeepalive, updateTableReservation } from '@/services/api';
 import { useSessionStore } from '@/store/useSessionStore';
 import type { MenuCategory, MenuProduct } from '@/types/restaurant';
@@ -134,8 +135,6 @@ export default function KioskPage() {
     return Number.isInteger(storedValue) && storedValue > 0 ? storedValue : null;
   });
   const [customerName, setCustomerName] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [guestCount, setGuestCount] = useState('1');
   const [customerPhone, setCustomerPhone] = useState('');
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [welcomeScreen, setWelcomeScreen] = useState(true);
@@ -434,8 +433,8 @@ export default function KioskPage() {
       await updateTableReservation({ tableId: nextTableId, status: 'RESERVED', kioskKey,
         reservation: {
           name: customerName.trim(),
-          address: customerAddress.trim(),
-          guests: Number(guestCount),
+          address: '',
+          guests: 1,
           ...(customerPhone.trim() ? { phone: customerPhone.trim() } : {}),
         },
       });
@@ -603,8 +602,6 @@ export default function KioskPage() {
   function returnToWelcome() {
     setSelectedArea(null);
     setCustomerName('');
-    setCustomerAddress('');
-    setGuestCount('1');
     sessionStorage.removeItem(KIOSK_RESERVATION_KEY);
     setCustomerPhone('');
     setSelectedTableId(null);
@@ -646,32 +643,25 @@ export default function KioskPage() {
       }
       setSelectedArea(null);
       setSelectedTableId(null);
-      setOrderModeStep('TYPE');
+    } else {
+      setSelectedTableId(null);
+    }
+    setOrderModeStep('CONTACT');
+  }
+
+  function confirmCustomerContact() {
+    if (!customerName.trim()) {
+      setError('Ingresa el nombre completo para continuar.');
+      return;
+    }
+
+    setError(null);
+    if (serviceType === 'TAKE_OUT') {
       setWelcomeScreen(false);
       setOrderModeDialogOpen(false);
       setCartVisible(false);
       return;
     }
-    setSelectedTableId(null);
-    setOrderModeStep('CONTACT');
-  }
-
-  function confirmCustomerContact() {
-    if (!Number.isSafeInteger(Number(guestCount)) || Number(guestCount) < 1) {
-      setError('Indica un número entero de personas mayor que cero.');
-      return;
-    }
-    if (!customerName.trim()) {
-      setError('Ingresa el nombre para continuar.');
-      return;
-    }
-
-    if (!customerPhone.trim()) {
-      setError('Ingresa el telefono para continuar.');
-      return;
-    }
-
-    setError(null);
     setOrderModeStep('AREA');
   }
 
@@ -838,6 +828,21 @@ export default function KioskPage() {
     }, 0);
   }, [cartLines, menuProductById, modifierOptionByName]);
 
+  const customerDisplayPayload = useMemo(
+    () =>
+      buildCustomerDisplayFromCartLines({
+        brandName: snapshot?.brand?.name ?? 'Restaurante',
+        currencySymbol,
+        lines: cartLines,
+        getProductName: (productId) => menuProductById.get(productId)?.name,
+        getUnitPrice: (productId) => menuProductById.get(productId)?.price ?? 0,
+        getModifierUnitTotal: (line) =>
+          getBillableModifierTotal(line.sauces) + getBillableModifierTotal(line.dressings),
+      }),
+    [snapshot?.brand?.name, currencySymbol, cartLines, menuProductById, modifierOptionByName],
+  );
+  useSunmiCustomerDisplaySync(customerDisplayPayload);
+
   async function handleSendOrder() {
     setError(null);
     setSuccessOrder(null);
@@ -849,6 +854,13 @@ export default function KioskPage() {
 
     if (!cartLines.length) {
       setError('Agrega al menos un producto al pedido.');
+      return;
+    }
+
+    if (!customerName.trim()) {
+      setError('Ingresa el nombre completo del cliente.');
+      beginOrderFlow();
+      setOrderModeStep('CONTACT');
       return;
     }
 
@@ -1206,10 +1218,6 @@ export default function KioskPage() {
                     <span className="text-slate-500 dark:text-zinc-400">Telefono</span>
                     <span className="font-semibold text-slate-950 dark:text-white">{customerPhone.trim() || 'No registrado'}</span>
                   </div>
-                  {serviceType === 'DINE_IN' && reservedTableId && <>
-                    <p><strong>Personas en la reserva:</strong> {guestCount}</p>
-                    {customerAddress.trim() && <p className="break-words"><strong>Dirección:</strong> {customerAddress.trim()}</p>}
-                  </>}
                 </div>
                 <p className="mt-3 text-xs text-slate-500 dark:text-zinc-500">
                   Los datos del cliente se capturan en el flujo guiado y aquí solo se muestran como referencia.
@@ -1357,7 +1365,7 @@ export default function KioskPage() {
                   {orderModeStep === 'TYPE'
                     ? 'Selecciona una opcion'
                     : orderModeStep === 'CONTACT'
-                      ? 'Nombre y telefono'
+                      ? 'Datos del cliente'
                       : orderModeStep === 'AREA'
                         ? 'Elige el area'
                         : 'Elige la mesa'}
@@ -1366,7 +1374,9 @@ export default function KioskPage() {
                   {orderModeStep === 'TYPE'
                     ? 'Al confirmar, el menú aparecerá a pantalla completa y podrás ver tu pedido al costado.'
                     : orderModeStep === 'CONTACT'
-                      ? 'Antes de elegir la mesa, registra el nombre y el telefono del cliente.'
+                      ? serviceType === 'TAKE_OUT'
+                        ? 'Indica el nombre completo. El telefono es opcional.'
+                        : 'Antes de elegir la mesa, registra el nombre completo. El telefono es opcional.'
                     : orderModeStep === 'AREA'
                       ? 'Primero selecciona el area donde estás ubicado y luego verás las mesas disponibles.'
                       : 'Cuando confirmes la mesa, continuarás al menú para seleccionar los platillos.'}
@@ -1420,32 +1430,25 @@ export default function KioskPage() {
               <div className="mt-6">
                 <div className="grid gap-4">
                   <div>
-                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nombre</label>
+                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nombre completo</label>
                     <input
                       value={customerName}
                       maxLength={150}
+                      required
                       onChange={(event) => setCustomerName(event.target.value)}
-                      placeholder="Nombre del cliente"
+                      placeholder="Nombre y apellidos"
                       className="mt-3 h-14 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white dark:placeholder:text-zinc-500 sm:text-base"
                     />
                   </div>
                   <div>
-                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Telefono</label>
+                    <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Telefono (opcional)</label>
                     <input
                       value={customerPhone}
                       onChange={(event) => setCustomerPhone(event.target.value)}
-                      placeholder="Telefono del cliente"
+                      placeholder="Opcional"
                       className="mt-3 h-14 w-full rounded-[22px] border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-amber-300/40 dark:border-white/10 dark:bg-black/30 dark:text-white dark:placeholder:text-zinc-500 sm:text-base"
                     />
                   </div>
-                  <label className="text-sm">Dirección (opcional)
-                    <input value={customerAddress} onChange={event => setCustomerAddress(event.target.value)} maxLength={250}
-                      className="mt-2 h-14 w-full rounded-2xl border bg-transparent px-4" />
-                  </label>
-                  <label className="text-sm">¿Para cuántas personas?
-                    <input value={guestCount} onChange={event => setGuestCount(event.target.value)} type="number" min={1} step={1}
-                      className="mt-2 h-14 w-full rounded-2xl border bg-transparent px-4" />
-                  </label>
                 </div>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -1463,7 +1466,7 @@ export default function KioskPage() {
                     className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-amber-300/30 bg-amber-300/10 text-sm font-semibold text-amber-900 transition hover:bg-amber-300/15 dark:text-white sm:h-14 sm:text-base"
                   >
                     <AppIcon icon={Check} className="h-4 w-4" />
-                    Continuar a areas
+                    {serviceType === 'TAKE_OUT' ? 'Continuar al menu' : 'Continuar a areas'}
                   </button>
                 </div>
               </div>
@@ -1524,7 +1527,6 @@ export default function KioskPage() {
                       key={table.id}
                       type="button"
                       onClick={() => setSelectedTableId(table.id)}
-                      disabled={Number(guestCount) > table.capacity}
                       data-table-status={table.status}
                       aria-pressed={selectedTableId === table.id}
                       className={`rounded-[24px] border px-4 py-4 text-left transition ${selectedTableId === table.id ? 'ring-2 ring-inset ring-slate-700 dark:ring-white' : ''}`}
@@ -1538,7 +1540,6 @@ export default function KioskPage() {
                           </div>
                         </div>
                       </div>
-                      {Number(guestCount) > table.capacity && <p className="mt-1 text-xs">Cupo insuficiente</p>}
                     </button>
                   ))}
                 </div>

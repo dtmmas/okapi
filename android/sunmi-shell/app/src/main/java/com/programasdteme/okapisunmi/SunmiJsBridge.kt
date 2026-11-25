@@ -3,10 +3,38 @@ package com.programasdteme.okapisunmi
 import android.webkit.JavascriptInterface
 import org.json.JSONObject
 
-class SunmiJsBridge(private val printerManager: SunmiPrinterManager) {
+class SunmiJsBridge(
+  private val printerManager: SunmiPrinterManager,
+  private val customerDisplayManager: CustomerDisplayManager,
+) {
   @JavascriptInterface
   fun isAvailable(): String {
     return success(printerManager.isAvailable())
+  }
+
+  @JavascriptInterface
+  fun isCustomerDisplayAvailable(): String {
+    return success(customerDisplayManager.isAvailable())
+  }
+
+  @JavascriptInterface
+  fun updateCustomerDisplay(payload: String): String {
+    return try {
+      customerDisplayManager.updateCart(payload)
+      success(true)
+    } catch (error: Exception) {
+      error(error.message ?: "No fue posible actualizar la pantalla del cliente.")
+    }
+  }
+
+  @JavascriptInterface
+  fun clearCustomerDisplay(): String {
+    return try {
+      customerDisplayManager.clear()
+      success(true)
+    } catch (error: Exception) {
+      error(error.message ?: "No fue posible limpiar la pantalla del cliente.")
+    }
   }
 
   @JavascriptInterface

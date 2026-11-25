@@ -115,7 +115,7 @@ export default function PosCustomerPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-4 text-slate-900 dark:bg-[#07070a] dark:text-white sm:px-6 sm:py-6 lg:px-10 lg:py-8">
-      <header className="mx-auto max-w-3xl">
+      <header className="w-full text-left">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">POS</p>
@@ -137,7 +137,7 @@ export default function PosCustomerPage() {
         </div>
       </header>
 
-      <main className="mx-auto mt-8 max-w-3xl sm:mt-10">
+      <main className="mt-6 w-full min-w-0">
         <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none sm:p-6 lg:p-8">
           <label className="text-xs uppercase tracking-[0.35em] text-slate-500 dark:text-zinc-500">Nombre</label>
           <input

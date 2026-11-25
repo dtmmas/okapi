@@ -16,10 +16,48 @@ type CashPageProps = {
   view?: 'overview' | 'movements';
 };
 
+function isCounterChannel(channel?: string) {
+  return String(channel ?? '').trim().toLowerCase() === 'mostrador';
+}
+
+function formatSaleOrigin(channel?: string, tableCode?: string) {
+  if (isCounterChannel(channel)) {
+    return tableCode ? `Venta desde caja · Mesa ${tableCode}` : 'Venta desde caja';
+  }
+  const normalized = String(channel ?? '').trim().toLowerCase();
+  if (normalized === 'salon' || normalized === 'salón' || tableCode) {
+    return tableCode ? `Venta desde mesero · Mesa ${tableCode}` : 'Venta desde mesero';
+  }
+  return 'Venta desde mesero';
+}
+
+function SaleOriginBadge({ channel, tableCode, className = '' }: { channel?: string; tableCode?: string; className?: string }) {
+  const fromCounter = isCounterChannel(channel);
+  return (
+    <span className={`inline-flex flex-wrap items-center gap-1.5 ${className}`}>
+      <span
+        className={
+          fromCounter
+            ? 'inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-amber-950 ring-1 ring-inset ring-amber-300 dark:bg-amber-500/25 dark:text-amber-50 dark:ring-amber-400/45'
+            : 'inline-flex rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-violet-950 ring-1 ring-inset ring-violet-300 dark:bg-violet-500/25 dark:text-violet-50 dark:ring-violet-400/45'
+        }
+      >
+        {fromCounter ? 'Venta desde caja' : 'Venta desde mesero'}
+      </span>
+      {tableCode ? (
+        <span className="inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-900 ring-1 ring-inset ring-sky-200 dark:bg-sky-500/20 dark:text-sky-100 dark:ring-sky-400/35">
+          Mesa {tableCode}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 type GroupedSaleMovement = {
   orderCode: string;
   customerName?: string;
   tableCode?: string;
+  orderChannel?: string;
   totalAmount: number;
   latestCreatedAt: string;
   payments: CashMovement[];
@@ -192,6 +230,7 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
           orderCode: movement.orderCode,
           customerName: movement.customerName,
           tableCode: movement.tableCode,
+          orderChannel: movement.orderChannel,
           totalAmount: movement.amount,
           latestCreatedAt: movement.createdAt,
           payments: [movement],
@@ -252,6 +291,7 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
       printedAt,
       metadata: [
         { label: 'Cuenta', value: group.orderCode },
+        { label: 'Origen', value: formatSaleOrigin(group.orderChannel, group.tableCode) },
         { label: 'Abrió el pedido', value: group.payments[0]?.openedByName ?? 'Sin registrar' },
         { label: 'Mesa', value: group.tableCode ?? '-' },
         { label: 'Cliente', value: group.customerName ?? 'Consumidor final' },
@@ -298,6 +338,7 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
       brandName,
       printedAt,
       metadata: [
+        { label: 'Origen', value: formatSaleOrigin(group.orderChannel, group.tableCode) },
         { label: 'Abrió el pedido', value: group.payments[0]?.openedByName ?? 'Sin registrar' },
         { label: 'Cobró', value: payment.collectedByName ?? 'Sin registrar' },
         { label: 'Cuenta', value: group.orderCode },
@@ -580,16 +621,19 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="font-semibold text-slate-950 dark:text-white">{group.orderCode}</p>
-                    <p className="mt-1 text-sm text-slate-500 dark:text-zinc-500">
-                      {group.tableCode ? `Mesa ${group.tableCode}` : group.customerName ?? 'Consumidor final'}
-                      {group.tableCode && group.customerName ? ` • ${group.customerName}` : ''}
-                    </p>
-                    <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-zinc-500">
-                      {group.payments.length} abono(s) registrado(s)
+                    <div className="mt-2">
+                      <SaleOriginBadge channel={group.orderChannel} tableCode={group.tableCode} />
+                    </div>
+                    {group.customerName ? (
+                      <p className="mt-1.5 text-sm text-slate-600 dark:text-zinc-400">{group.customerName}</p>
+                    ) : null}
+                    <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">
+                      Abrió: {group.payments[0]?.openedByName ?? 'Sin registrar'}
+                      {group.payments.length ? ` · ${group.payments.length} abono(s)` : ''}
                     </p>
                   </div>
                   <div className="text-right">
-                    <div className="flex flex-wrap justify-end gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <StatusBadge value="SALE" />
                     </div>
                     <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-zinc-200">
@@ -631,7 +675,9 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
                         className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/70 bg-slate-50 px-4 py-3 dark:border-white/8 dark:bg-black/20"
                       >
                         <div>
-                          <p className="text-sm font-semibold text-slate-900 dark:text-white">{payment.createdAt} · Cobró: {payment.actorName ?? 'Sin registrar'}</p>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                            {payment.createdAt} · Cobró: {payment.actorName ?? 'Sin registrar'}
+                          </p>
                           <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">{formatAuditDetail(payment)}</p>
                         </div>
                         <div className="text-right">
@@ -921,9 +967,14 @@ export default function CashPage({ view = 'overview' }: CashPageProps) {
               <div>
                 <p className="text-xs uppercase tracking-[0.25em] text-slate-500 dark:text-zinc-500">Detalle de venta</p>
                 <h3 className="mt-2 font-display text-2xl text-slate-950 dark:text-white">{selectedDetailGroup.orderCode}</h3>
-                <p className="mt-2 text-sm text-slate-500 dark:text-zinc-500">
-                  {selectedDetailGroup.tableCode ? `Mesa ${selectedDetailGroup.tableCode}` : selectedDetailGroup.customerName ?? 'Consumidor final'}
-                  {selectedDetailGroup.tableCode && selectedDetailGroup.customerName ? ` • ${selectedDetailGroup.customerName}` : ''}
+                <div className="mt-2">
+                  <SaleOriginBadge channel={selectedDetailGroup.orderChannel} tableCode={selectedDetailGroup.tableCode} />
+                </div>
+                {selectedDetailGroup.customerName ? (
+                  <p className="mt-1.5 text-sm text-slate-500 dark:text-zinc-500">{selectedDetailGroup.customerName}</p>
+                ) : null}
+                <p className="mt-1 text-xs text-slate-500 dark:text-zinc-500">
+                  Abrió el pedido: {selectedDetailGroup.payments[0]?.openedByName ?? 'Sin registrar'}
                 </p>
               </div>
               <button

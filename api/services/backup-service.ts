@@ -132,6 +132,28 @@ export async function listBackupArchives() {
     }));
 }
 
+export async function deleteBackupArchive(archiveId: string) {
+  const activeJob = activeJobId ? jobs.get(activeJobId) : null;
+  if (activeJob && (activeJob.archiveId === archiveId || activeJob.status === 'running' || activeJob.status === 'queued')) {
+    throw new Error('Espera a que termine el respaldo o la restauración antes de eliminar archivos.');
+  }
+
+  const records = await readArchiveIndex();
+  const record = records.find((item) => item.id === archiveId);
+  if (!record) {
+    throw new Error('Respaldo no encontrado en el historial.');
+  }
+
+  const filePath = path.join(backupArchiveDir, record.storageName);
+  await fsPromises.rm(filePath, { force: true });
+  await writeArchiveIndex(records.filter((item) => item.id !== archiveId));
+
+  return {
+    id: record.id,
+    fileName: record.fileName,
+  };
+}
+
 export function getBackupArchiveById(archiveId: string) {
   return readArchiveIndex().then((records) => records.find((record) => record.id === archiveId) ?? null);
 }
@@ -398,6 +420,60 @@ async function prepareDatabaseForRestore(onProgress: (message: string) => void) 
   await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS=1');
 }
 
+async function sqlBackupIncludesCreateTable(sqlPath: string): Promise<boolean> {
+  const handle = await fsPromises.open(sqlPath, 'r');
+  try {
+    const buffer = Buffer.alloc(1024 * 1024);
+    let carry = '';
+    let position = 0;
+
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+      if (!bytesRead) {
+        return false;
+      }
+
+      position += bytesRead;
+      const text = carry + buffer.subarray(0, bytesRead).toString('utf8');
+      if (/CREATE\s+TABLE\b/i.test(text)) {
+        return true;
+      }
+      carry = text.slice(-24);
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function loadCanonicalTableNames(): Promise<Map<string, string>> {
+  const tables = await prisma.$queryRawUnsafe<TableNameRow[]>(
+    `
+      SELECT TABLE_NAME
+      FROM information_schema.tables
+      WHERE table_schema = DATABASE()
+        AND TABLE_TYPE = 'BASE TABLE'
+    `,
+  );
+  const names = new Map<string, string>();
+  for (const { TABLE_NAME } of tables) {
+    names.set(TABLE_NAME.toLowerCase(), TABLE_NAME);
+  }
+  return names;
+}
+
+function rewriteSqlTableNames(statement: string, names: Map<string, string>): string {
+  return statement.replace(
+    /\b(INSERT\s+INTO|UPDATE|FROM|JOIN|TABLE(?:\s+IF\s+EXISTS)?|REFERENCES)\s+`([^`]+)`/gi,
+    (match, keyword: string, ident: string) => {
+      const canonical = names.get(ident.toLowerCase());
+      if (!canonical) {
+        return match;
+      }
+      return `${keyword} \`${canonical}\``;
+    },
+  );
+}
+
 async function importSqlFileWithPrisma(sqlPath: string, onProgress: (message: string) => void): Promise<void> {
   await prepareDatabaseForRestore(onProgress);
 
@@ -415,11 +491,13 @@ async function importSqlFileWithPrisma(sqlPath: string, onProgress: (message: st
     await reconnectPrismaClient();
   }
 
+  const tableNames = await loadCanonicalTableNames();
+
   onProgress('Aplicando sentencias del respaldo...');
   await prisma.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS=0');
 
   for (let index = 0; index < executableStatements.length; index += 1) {
-    const statement = executableStatements[index];
+    const statement = rewriteSqlTableNames(executableStatements[index], tableNames);
     onProgress(`Ejecutando SQL (${index + 1}/${total})...`);
 
     try {
@@ -485,8 +563,14 @@ async function assertSqlBackupLooksValid(sqlPath: string): Promise<void> {
 
 async function runPrismaDbPush(onProgress: (message: string) => void): Promise<void> {
   onProgress('Alineando esquema de la base con esta versión de la app...');
+  const prismaBin = path.join(
+    process.cwd(),
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? 'prisma.cmd' : 'prisma',
+  );
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('npx', ['prisma', 'db', 'push', '--skip-generate'], {
+    const child = spawn(prismaBin, ['db', 'push', '--skip-generate'], {
       cwd: process.cwd(),
       env: process.env,
       windowsHide: true,
@@ -567,8 +651,9 @@ async function runMysqlImport(sqlPath: string, onProgress: (message: string) => 
     throw new Error('No fue posible interpretar DATABASE_URL.');
   }
 
+  const hasCreateTable = await sqlBackupIncludesCreateTable(sqlPath);
   const executable = resolveMysqlClientExecutable();
-  if (executable) {
+  if (executable && hasCreateTable) {
     onProgress(`Restaurando base de datos con ${path.basename(executable)}...`);
     try {
       await prepareDatabaseForRestore(onProgress);
@@ -578,10 +663,14 @@ async function runMysqlImport(sqlPath: string, onProgress: (message: string) => 
       return;
     } catch (error) {
       const spawnError = error as NodeJS.ErrnoException;
-      if (spawnError?.code !== 'ENOENT') {
+      const message = error instanceof Error ? error.message : '';
+      if (spawnError?.code !== 'ENOENT' && !/1146|doesn't exist|does not exist/i.test(message)) {
         throw error;
       }
+      onProgress('El cliente mysql no pudo crear las tablas. Reintentando con el esquema de la aplicación...');
     }
+  } else if (!hasCreateTable) {
+    onProgress('El respaldo solo trae datos. Se recrearán las tablas antes de insertarlos...');
   }
 
   await importSqlFileWithPrisma(sqlPath, onProgress);

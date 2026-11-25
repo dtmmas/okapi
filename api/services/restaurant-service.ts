@@ -765,7 +765,7 @@ function buildStationOrders(orderRows: Array<any>, station: PreparationStation):
   const now = Date.now();
 
   return orderRows
-    .filter((order) => !['PAID', 'CANCELLED'].includes(order.status))
+    .filter((order) => order.status !== 'CANCELLED' && (order.status !== 'PAID' || order.channel === 'Mostrador'))
     .map((order) => {
       const itemsForStation = order.items.filter((item: any) => item.station === station && toKitchenStatus(item.status) !== 'DELIVERED');
 
@@ -800,7 +800,13 @@ function buildStationOrders(orderRows: Array<any>, station: PreparationStation):
         customerName,
         area:
           order.table?.area ??
-          (order.type === 'DELIVERY' ? 'Delivery' : order.type === 'TAKE_OUT' ? 'Recojo' : order.branch?.name ?? 'Operacion'),
+          (order.channel === 'Mostrador'
+            ? 'Mostrador'
+            : order.type === 'DELIVERY'
+              ? 'Delivery'
+              : order.type === 'TAKE_OUT'
+                ? 'Recojo'
+                : order.branch?.name ?? 'Operacion'),
         status: ticketStatus,
         startedAt: startedAtDate.toISOString(),
         elapsedMinutes,
@@ -1045,9 +1051,38 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, 
   });
 
   const activeOrders = orders.filter((order) => ['OPEN', 'IN_PREPARATION', 'READY', 'SERVED'].includes(order.status) && order.pendingAmount > 0);
+  const counterHoldByTableId = new Map<number, NonNullable<RestaurantTable['counterHold']>>();
+  for (const order of orderRows) {
+    if (order.holdsTable && order.tableId && order.status === 'PAID') {
+      counterHoldByTableId.set(order.tableId, {
+        orderId: order.id,
+        code: order.code,
+        customerName: order.customer?.name ?? 'Consumidor final',
+      });
+    }
+  }
+  const unassignedCounterSince = Date.now() - 18 * 60 * 60 * 1000;
+  const unassignedCounterOrders = orderRows
+    .filter(
+      (order) =>
+        order.channel === 'Mostrador' &&
+        order.status === 'PAID' &&
+        !order.holdsTable &&
+        !order.tableId &&
+        order.createdAt.getTime() >= unassignedCounterSince,
+    )
+    .map((order) => ({
+      id: order.id,
+      code: order.code,
+      branchId: order.branchId,
+      customerName: order.customer?.name ?? 'Consumidor final',
+      total: Number(order.total),
+      createdAt: order.createdAt.toISOString(),
+    }));
 
   const tables: RestaurantTable[] = tableRows.map((table) => {
-    const activeOrder = activeOrders.find((order) => order.tableCode === table.code);
+    const activeOrder = activeOrders.find((order) => order.tableCode === table.code && order.branchId === table.branchId);
+    const counterHold = counterHoldByTableId.get(table.id);
 
     return {
       id: table.id,
@@ -1056,8 +1091,9 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, 
       capacity: table.capacity,
       area: table.area,
       sortOrder: table.sortOrder,
-      status: table.status === PrismaTableStatus.RESERVED ? PrismaTableStatus.RESERVED : activeOrder ? PrismaTableStatus.OCCUPIED : PrismaTableStatus.FREE,
+      status: table.status === PrismaTableStatus.RESERVED ? PrismaTableStatus.RESERVED : activeOrder || counterHold ? PrismaTableStatus.OCCUPIED : PrismaTableStatus.FREE,
       currentOrder: activeOrder?.code,
+      ...(counterHold ? { counterHold } : {}),
       ...(table.status === 'RESERVED' && table.reservation && (!branchId || table.branchId === branchId)
         ? { reservation: { ...table.reservation, source: table.reservation.source === 'ADMIN' ? 'ADMIN' as const : 'KIOSK' as const } } : {}),
     };
@@ -1184,6 +1220,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, 
               orderCode: order.code,
               customerName: order.customer?.name ?? order.table?.code ?? 'Consumidor final',
               tableCode: order.table?.code ?? undefined,
+              orderChannel: order.channel,
               paymentReference: payment.reference ?? null,
               orderTotal: Number(order.total),
               orderPaidAmount: order.payments.reduce((sum, item) => sum + Number(item.amount), 0),
@@ -1248,6 +1285,7 @@ async function buildDatabaseSnapshot(tenantId: number, branchId: number | null, 
     salesTrend,
     topProducts,
     activeOrders,
+    unassignedCounterOrders,
     tables,
     tableAreas: tableAreaRows.map((area): TableArea => ({
       id: area.id,
@@ -1287,17 +1325,21 @@ export async function getBootstrapSnapshot(user: SanitizedAuthUser) {
 }
 
 export async function getPublicBrand(): Promise<RestaurantSnapshot['brand']> {
-  if (await canUseDatabase()) {
-    const tenant = await prisma.tenant.findFirst({ orderBy: { id: 'desc' } });
-    if (tenant) {
-      return {
-        name: tenant.name,
-        slogan: tenant.slogan ?? '',
-        currencyCode: tenant.currencyCode ?? restaurantSnapshot.brand.currencyCode,
-        currencySymbol: tenant.currencySymbol ?? restaurantSnapshot.brand.currencySymbol,
-        logoData: tenant.logoData ?? null,
-      };
+  try {
+    if (await canUseDatabase()) {
+      const tenant = await prisma.tenant.findFirst({ orderBy: { id: 'desc' } });
+      if (tenant) {
+        return {
+          name: tenant.name,
+          slogan: tenant.slogan ?? '',
+          currencyCode: tenant.currencyCode ?? restaurantSnapshot.brand.currencyCode,
+          currencySymbol: tenant.currencySymbol ?? restaurantSnapshot.brand.currencySymbol,
+          logoData: tenant.logoData ?? null,
+        };
+      }
     }
+  } catch (error) {
+    console.error('public brand unavailable', error);
   }
 
   return restaurantSnapshot.brand;
@@ -1725,6 +1767,69 @@ export async function updateUserPassword(
 
   target.passwordHash = bcrypt.hashSync(payload.password, 8);
   return { success: true };
+}
+
+const PROTECTED_ADMIN_EMAIL = 'admin@restaurante.gt';
+
+export async function deleteUser(actor: SanitizedAuthUser, userId: number) {
+  if (await canUseDatabase()) {
+    const existing = await prisma.user.findFirst({
+      where: { id: userId, tenantId: actor.tenantId },
+    });
+
+    if (!existing) {
+      throw new Error('Usuario no encontrado.');
+    }
+
+    if (existing.email.trim().toLowerCase() === PROTECTED_ADMIN_EMAIL) {
+      throw new Error('No se puede eliminar la cuenta admin@restaurante.gt.');
+    }
+
+    const keeper = await prisma.user.findFirst({
+      where: { tenantId: actor.tenantId, email: PROTECTED_ADMIN_EMAIL },
+      select: { id: true },
+    });
+
+    const [shifts, movements, inventory, purchases, waste] = await Promise.all([
+      prisma.cashShift.count({ where: { openedById: existing.id } }),
+      prisma.cashMovementRecord.count({ where: { createdById: existing.id } }),
+      prisma.inventoryMovement.count({ where: { createdById: existing.id } }),
+      prisma.purchaseReceipt.count({ where: { createdById: existing.id } }),
+      prisma.wasteRecord.count({ where: { createdById: existing.id } }),
+    ]);
+
+    if (shifts + movements + inventory + purchases + waste > 0 && !keeper) {
+      throw new Error('No se puede eliminar: tiene movimientos y no existe admin@restaurante.gt para conservarlos.');
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (keeper) {
+        await tx.cashShift.updateMany({ where: { openedById: existing.id }, data: { openedById: keeper.id } });
+        await tx.cashMovementRecord.updateMany({ where: { createdById: existing.id }, data: { createdById: keeper.id } });
+        await tx.inventoryMovement.updateMany({ where: { createdById: existing.id }, data: { createdById: keeper.id } });
+        await tx.purchaseReceipt.updateMany({ where: { createdById: existing.id }, data: { createdById: keeper.id } });
+        await tx.wasteRecord.updateMany({ where: { createdById: existing.id }, data: { createdById: keeper.id } });
+      }
+
+      await tx.order.updateMany({ where: { createdById: existing.id }, data: { createdById: null } });
+      await tx.user.delete({ where: { id: existing.id } });
+    });
+
+    return { id: existing.id, email: existing.email };
+  }
+
+  const index = mockUsers.findIndex((item) => item.id === userId && item.tenantId === actor.tenantId);
+  if (index < 0) {
+    throw new Error('Usuario no encontrado.');
+  }
+
+  const target = mockUsers[index];
+  if (target.email.trim().toLowerCase() === PROTECTED_ADMIN_EMAIL) {
+    throw new Error('No se puede eliminar la cuenta admin@restaurante.gt.');
+  }
+
+  mockUsers.splice(index, 1);
+  return { id: target.id, email: target.email };
 }
 
 export async function listBranches(user: SanitizedAuthUser) {
@@ -2302,6 +2407,14 @@ export async function updateTableStatusForUser(
 
     if (hasActiveOrder) {
       throw new Error('No se puede cambiar el estado de una mesa con cuenta activa.');
+    }
+
+    const counterHold = await tx.order.findFirst({
+      where: { tenantId: user.tenantId, tableId: table.id, holdsTable: true },
+      select: { id: true },
+    });
+    if (counterHold) {
+      throw new Error('Esta mesa está ocupada por un cliente de mostrador. Ciérrala con Cliente se retiró.');
     }
 
     if (payload.status === 'RESERVED') {
@@ -3040,14 +3153,20 @@ export async function payOrderForUser(
     if (isCompleted) {
       await tx.order.update({
         where: { id: order.id },
-        data: { status: PrismaOrderStatus.PAID, closedAt: new Date() },
+        data: { status: PrismaOrderStatus.PAID, closedAt: new Date(), holdsTable: false },
       });
 
       if (order.tableId) {
-        await tx.restaurantTable.update({
-          where: { id: order.tableId },
-          data: { status: PrismaTableStatus.FREE },
+        const counterHold = await tx.order.findFirst({
+          where: { tenantId: user.tenantId, tableId: order.tableId, holdsTable: true },
+          select: { id: true },
         });
+        if (!counterHold) {
+          await tx.restaurantTable.update({
+            where: { id: order.tableId },
+            data: { status: PrismaTableStatus.FREE },
+          });
+        }
       }
     }
 
@@ -3059,6 +3178,283 @@ export async function payOrderForUser(
       registeredAmount: amountToRegister,
       collectedByName: payment.collectedByName,
     };
+  });
+}
+
+const COUNTER_CHANNEL = 'Mostrador';
+
+async function requireOpenCashShift(user: SanitizedAuthUser) {
+  const shift = await prisma.cashShift.findFirst({
+    where: { tenantId: user.tenantId, branchId: user.branchId, closedAt: null },
+    select: { id: true },
+  });
+  if (!shift) {
+    throw new Error('Abre la caja de la sucursal antes de cobrar en mostrador.');
+  }
+}
+
+type CounterPaymentInput = {
+  method: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
+  amount: number;
+  receivedAmount?: number | null;
+  reference?: string | null;
+  proofImage?: string | null;
+};
+
+function normalizeCounterPayments(payments: CounterPaymentInput[], total: number) {
+  if (!payments.length) throw new Error('Registra al menos un pago.');
+  const normalized = payments.map((payment) => {
+    const amount = Number(payment.amount);
+    const reference = typeof payment.reference === 'string' ? payment.reference.trim() : '';
+    const receivedAmount = typeof payment.receivedAmount === 'number' && Number.isFinite(payment.receivedAmount) ? payment.receivedAmount : null;
+    const proofImage = typeof payment.proofImage === 'string' ? payment.proofImage.trim() : '';
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('El monto del pago es inválido.');
+    if (payment.method === 'CASH') {
+      if (receivedAmount === null || receivedAmount < amount) throw new Error('El monto recibido es menor al abono en efectivo.');
+    } else if (payment.method === 'CARD' || payment.method === 'TRANSFER') {
+      if (!reference) throw new Error('La referencia es obligatoria para tarjeta o transferencia.');
+    }
+    if (payment.method === 'TRANSFER') {
+      if (!proofImage.startsWith('data:image/')) throw new Error('El comprobante debe ser una imagen válida.');
+      if (proofImage.length > 2_500_000) throw new Error('La imagen del comprobante es muy grande.');
+    }
+    return { method: payment.method, amount: Number(amount.toFixed(2)), receivedAmount, reference, proofImage };
+  });
+  const paid = Number(normalized.reduce((sum, payment) => sum + payment.amount, 0).toFixed(2));
+  if (Math.abs(paid - total) > 0.01) throw new Error('Los pagos deben cubrir el total del pedido antes de enviar la comanda.');
+  return normalized;
+}
+
+export async function createCounterOrderForUser(
+  user: SanitizedAuthUser,
+  payload: {
+    customerName?: string | null;
+    customerPhone?: string | null;
+    method?: 'CASH' | 'CARD' | 'TRANSFER' | 'MIXED';
+    amount?: number;
+    receivedAmount?: number | null;
+    reference?: string | null;
+    proofImage?: string | null;
+    payments?: CounterPaymentInput[];
+    items: Array<{ productId: number; quantity: number; notes?: string | null }>;
+  },
+) {
+  if (!(await canUseDatabase())) {
+    throw new Error('Base de datos no disponible.');
+  }
+  if (!user.permissions.includes('CASH_MANAGE')) {
+    throw new Error('No tienes permisos para cobrar en mostrador.');
+  }
+  if (!payload.items.length) {
+    throw new Error('El pedido debe incluir al menos un producto.');
+  }
+  await requireOpenCashShift(user);
+
+  const branchId = user.branchId;
+  const productIds = payload.items.map((item) => item.productId);
+  const products = await prisma.product.findMany({
+    where: { tenantId: user.tenantId, id: { in: productIds } },
+    include: { category: true },
+  });
+  if (products.length !== new Set(productIds).size) {
+    throw new Error('Uno o varios productos no existen.');
+  }
+
+  const priceMap = new Map(products.map((product) => [product.id, Number(product.price)] as const));
+  const stationMap = new Map(
+    products.map((product) => [product.id, product.category?.station ?? PrismaPreparationStation.KITCHEN] as const),
+  );
+  const total = Number(
+    payload.items
+      .reduce((sum, item) => sum + Number(item.quantity) * Number(priceMap.get(item.productId) ?? 0), 0)
+      .toFixed(2),
+  );
+  const payments = normalizeCounterPayments(
+    payload.payments?.length
+      ? payload.payments
+      : [{
+          method: payload.method ?? 'CASH',
+          amount: payload.amount ?? total,
+          receivedAmount: payload.receivedAmount,
+          reference: payload.reference,
+          proofImage: payload.proofImage,
+        }],
+    total,
+  );
+  const cashChange = Number(
+    payments
+      .filter((payment) => payment.method === 'CASH' && payment.receivedAmount !== null)
+      .reduce((sum, payment) => sum + Math.max(0, (payment.receivedAmount ?? 0) - payment.amount), 0)
+      .toFixed(2),
+  );
+
+  const code = `ORD-${String(Date.now()).slice(-8)}`;
+  const sentItems = payload.items.map((item) => ({
+    productId: item.productId,
+    quantity: item.quantity,
+    notes: item.notes?.trim() || null,
+    unitPrice: priceMap.get(item.productId) ?? 0,
+    station: stationMap.get(item.productId) ?? PrismaPreparationStation.KITCHEN,
+    status: PrismaPreparationStatus.PENDING,
+    sentById: user.id,
+    sentByName: user.name,
+  }));
+
+  const order = await prisma.$transaction(async (tx) => {
+    let customerId: number | null = null;
+    const phone = payload.customerPhone?.trim() || '';
+    const name = payload.customerName?.trim() || '';
+    if (phone) {
+      const normalizedPhone = normalizePhoneNumber(phone);
+      if (normalizedPhone) {
+        const existingCustomers = await tx.customer.findMany({
+          where: { tenantId: user.tenantId, phone: { not: null } },
+          select: { id: true, phone: true },
+        });
+        customerId = existingCustomers.find((customer) => normalizePhoneNumber(customer.phone) === normalizedPhone)?.id ?? null;
+      }
+    }
+    if (!customerId && name) {
+      const customer = await tx.customer.create({
+        data: { tenantId: user.tenantId, name, phone: phone || null },
+      });
+      customerId = customer.id;
+    }
+
+    const created = await tx.order.create({
+      data: {
+        tenantId: user.tenantId,
+        branchId,
+        customerId,
+        createdById: user.id,
+        openedByName: user.name,
+        code,
+        type: PrismaOrderType.DINE_IN,
+        status: PrismaOrderStatus.PAID,
+        total,
+        channel: COUNTER_CHANNEL,
+        holdsTable: false,
+        closedAt: new Date(),
+        items: { create: sentItems },
+        payments: {
+          create: payments.map((payment) => ({
+            collectedByName: user.name,
+            method: payment.method,
+            amount: payment.amount,
+            reference: payment.reference || null,
+            proofImage: payment.method === 'TRANSFER' ? payment.proofImage : null,
+          })),
+        },
+      },
+      include: { items: true, customer: true },
+    });
+
+    await staffActivity(
+      tx,
+      user,
+      branchId,
+      payments.length > 1 ? 'Dividió y cobró pedido de mostrador' : 'Cobró pedido de mostrador',
+      `${created.code} · Cuenta #${created.id} · ${payments.length} pago(s) · ${total.toFixed(2)}`,
+    );
+    const labels = { KITCHEN: 'cocina', BAR: 'barra', PASTRY: 'pastelería' } as const;
+    for (const station of new Set(sentItems.map((item) => item.station))) {
+      await staffActivity(tx, user, branchId, `Envió comanda a ${labels[station]}`, `${created.code} · Cuenta #${created.id}`);
+    }
+    await applyRecipeConsumption(tx, {
+      tenantId: user.tenantId,
+      branchId,
+      createdById: user.id,
+      orderId: created.id,
+      items: payload.items.map((item) => ({ productId: item.productId, quantity: Number(item.quantity) })),
+    });
+    return created;
+  });
+
+  return {
+    id: order.id,
+    code: order.code,
+    total: Number(order.total),
+    customerName: order.customer?.name ?? 'Consumidor final',
+    change: cashChange,
+  };
+}
+
+export async function assignCounterOrderTableForUser(user: SanitizedAuthUser, payload: { orderId: number; tableId: number }) {
+  if (!(await canUseDatabase())) throw new Error('Base de datos no disponible.');
+  if (!user.permissions.includes('CASH_MANAGE')) throw new Error('No tienes permisos para asignar la mesa.');
+
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findFirst({
+      where: { id: payload.orderId, tenantId: user.tenantId, branchId: user.branchId },
+    });
+    if (!order || order.channel !== COUNTER_CHANNEL || order.status !== PrismaOrderStatus.PAID) {
+      throw new Error('Pedido de mostrador no encontrado.');
+    }
+    if (order.holdsTable || order.tableId) {
+      throw new Error('Este pedido ya tiene mesa asignada.');
+    }
+    const table = await tx.restaurantTable.findFirst({
+      where: { id: payload.tableId, tenantId: user.tenantId, branchId: user.branchId },
+    });
+    if (!table) throw new Error('Mesa no disponible.');
+    if (table.status === PrismaTableStatus.RESERVED) throw new Error('La mesa está reservada.');
+    const busy = await tx.order.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        tableId: table.id,
+        OR: [
+          { holdsTable: true },
+          { status: { in: [PrismaOrderStatus.OPEN, PrismaOrderStatus.IN_PREPARATION, PrismaOrderStatus.READY, PrismaOrderStatus.SERVED] } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (busy) throw new Error('Esa mesa ya está ocupada.');
+
+    await tx.order.update({ where: { id: order.id }, data: { tableId: table.id, holdsTable: true } });
+    await tx.restaurantTable.update({ where: { id: table.id }, data: { status: PrismaTableStatus.OCCUPIED } });
+    await staffActivity(tx, user, order.branchId, 'Asignó mesa de mostrador', `${order.code} · Mesa ${table.code} · ${table.area}`);
+    return { success: true, tableCode: table.code, area: table.area };
+  });
+}
+
+export async function releaseCounterTableForUser(user: SanitizedAuthUser, payload: { tableId: number }) {
+  if (!(await canUseDatabase())) throw new Error('Base de datos no disponible.');
+  const canRelease = user.permissions.includes('CASH_MANAGE') || user.permissions.includes('POS_USE');
+  if (!canRelease) throw new Error('No tienes permisos para cerrar la mesa.');
+
+  return prisma.$transaction(async (tx) => {
+    const table = await tx.restaurantTable.findFirst({
+      where: { id: payload.tableId, tenantId: user.tenantId, ...(user.branchId ? { branchId: user.branchId } : {}) },
+    });
+    if (!table) throw new Error('Mesa no encontrada.');
+
+    const active = await tx.order.findFirst({
+      where: {
+        tenantId: user.tenantId,
+        tableId: table.id,
+        status: { in: [PrismaOrderStatus.OPEN, PrismaOrderStatus.IN_PREPARATION, PrismaOrderStatus.READY, PrismaOrderStatus.SERVED] },
+      },
+      select: { id: true },
+    });
+    if (active) throw new Error('Hay una cuenta del mesero abierta. Se cierra al cobrarla.');
+
+    const held = await tx.order.findFirst({
+      where: { tenantId: user.tenantId, tableId: table.id, holdsTable: true, status: PrismaOrderStatus.PAID },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!held) throw new Error('Esta mesa no tiene un cliente de mostrador por retirar.');
+
+    await tx.order.update({ where: { id: held.id }, data: { holdsTable: false } });
+    await tx.restaurantTable.update({ where: { id: table.id }, data: { status: PrismaTableStatus.FREE } });
+    await staffActivity(
+      tx,
+      user,
+      table.branchId,
+      'Cerró la mesa',
+      `Mesa ${table.code} · ${table.area} · Cliente se retiró · ${held.code}`,
+    );
+    return { success: true, closedByName: user.name, closedByRole: user.role, tableCode: table.code, area: table.area };
   });
 }
 
@@ -4420,14 +4816,26 @@ export async function moveOpenOrderToTable(
       throw new Error('La mesa destino ya tiene una cuenta activa.');
     }
 
+    const destinationHold = await tx.order.findFirst({
+      where: { tenantId: user.tenantId, tableId: payload.toTableId, holdsTable: true },
+      select: { id: true },
+    });
+    if (destinationHold) {
+      throw new Error('La mesa destino está ocupada por un cliente de mostrador.');
+    }
+
     await tx.order.update({
       where: { id: order.id },
       data: { tableId: payload.toTableId },
     });
 
+    const originHold = await tx.order.findFirst({
+      where: { tenantId: user.tenantId, tableId: originTable.id, holdsTable: true },
+      select: { id: true },
+    });
     await tx.restaurantTable.update({
       where: { id: originTable.id },
-      data: { status: PrismaTableStatus.FREE },
+      data: { status: originHold ? PrismaTableStatus.OCCUPIED : PrismaTableStatus.FREE },
     });
 
     await tx.restaurantTable.update({
@@ -4533,9 +4941,13 @@ export async function mergeOpenOrdersToTable(
       },
     });
 
+    const joinHold = await tx.order.findFirst({
+      where: { tenantId: user.tenantId, tableId: joinTable.id, holdsTable: true },
+      select: { id: true },
+    });
     await tx.restaurantTable.update({
       where: { id: joinTable.id },
-      data: { status: PrismaTableStatus.FREE },
+      data: { status: joinHold ? PrismaTableStatus.OCCUPIED : PrismaTableStatus.FREE },
     });
 
     await tx.restaurantTable.update({
